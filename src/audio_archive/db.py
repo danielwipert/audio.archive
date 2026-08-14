@@ -1,0 +1,322 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+import json
+import sqlite3
+from typing import Iterator
+
+from .models import ACTIVE_STATES, JobRequest, JobState, ensure_transition
+from .urls import parse_youtube_url
+
+
+SCHEMA_VERSION = 1
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+class ArchiveDatabase:
+    def __init__(self, path: Path):
+        self.path = path
+
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.path)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def initialize(self) -> None:
+        with self.connect() as connection:
+            current = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if current > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"Database schema {current} is newer than supported schema {SCHEMA_VERSION}"
+                )
+            if current == 0:
+                connection.executescript(
+                    """
+                    CREATE TABLE csv_imports (
+                        id INTEGER PRIMARY KEY,
+                        filename TEXT NOT NULL,
+                        file_sha256 TEXT NOT NULL,
+                        imported_at_utc TEXT NOT NULL,
+                        accepted_rows INTEGER NOT NULL,
+                        rejected_rows INTEGER NOT NULL,
+                        duplicate_rows INTEGER NOT NULL,
+                        UNIQUE(file_sha256, imported_at_utc)
+                    );
+
+                    CREATE TABLE jobs (
+                        id INTEGER PRIMARY KEY,
+                        state TEXT NOT NULL,
+                        origin TEXT NOT NULL,
+                        requested_artist TEXT,
+                        requested_title TEXT,
+                        requested_version TEXT,
+                        requested_url TEXT,
+                        profile TEXT NOT NULL,
+                        import_id INTEGER REFERENCES csv_imports(id),
+                        import_row INTEGER,
+                        source_extractor TEXT,
+                        source_id TEXT,
+                        source_url TEXT,
+                        source_title TEXT,
+                        source_creator TEXT,
+                        resolution_method TEXT,
+                        selected_score INTEGER,
+                        runner_up_score INTEGER,
+                        progress_percent REAL,
+                        quality_status TEXT,
+                        warning_summary TEXT,
+                        error_stage TEXT,
+                        error_summary TEXT,
+                        retry_count INTEGER NOT NULL DEFAULT 0,
+                        created_at_utc TEXT NOT NULL,
+                        updated_at_utc TEXT NOT NULL,
+                        started_at_utc TEXT,
+                        completed_at_utc TEXT
+                    );
+                    CREATE INDEX jobs_state_idx ON jobs(state);
+                    CREATE INDEX jobs_source_idx ON jobs(source_extractor, source_id);
+
+                    CREATE TABLE job_events (
+                        id INTEGER PRIMARY KEY,
+                        job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                        occurred_at_utc TEXT NOT NULL,
+                        from_state TEXT,
+                        to_state TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        message TEXT,
+                        detail_json TEXT
+                    );
+                    CREATE INDEX job_events_job_idx ON job_events(job_id, id);
+
+                    CREATE TABLE candidates (
+                        id INTEGER PRIMARY KEY,
+                        job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                        position INTEGER NOT NULL,
+                        video_id TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        channel TEXT,
+                        duration_seconds REAL,
+                        thumbnail_url TEXT,
+                        score INTEGER NOT NULL,
+                        reasons_json TEXT NOT NULL,
+                        warnings_json TEXT NOT NULL,
+                        disqualified INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE(job_id, video_id)
+                    );
+
+                    CREATE TABLE archive_items (
+                        archive_id TEXT PRIMARY KEY,
+                        extractor TEXT NOT NULL,
+                        source_id TEXT NOT NULL,
+                        item_directory TEXT NOT NULL,
+                        manifest_path TEXT NOT NULL,
+                        quality_status TEXT NOT NULL,
+                        source_master_sha256 TEXT NOT NULL,
+                        verified_at_utc TEXT NOT NULL,
+                        UNIQUE(extractor, source_id)
+                    );
+
+                    CREATE TABLE assets (
+                        id INTEGER PRIMARY KEY,
+                        archive_id TEXT NOT NULL REFERENCES archive_items(archive_id) ON DELETE CASCADE,
+                        role TEXT NOT NULL,
+                        relative_path TEXT NOT NULL,
+                        sha256 TEXT NOT NULL,
+                        media_properties_json TEXT NOT NULL,
+                        verified_at_utc TEXT NOT NULL,
+                        UNIQUE(archive_id, role, relative_path)
+                    );
+                    """
+                )
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    def create_csv_import(
+        self,
+        *,
+        filename: str,
+        file_sha256: str,
+        accepted_rows: int,
+        rejected_rows: int,
+        duplicate_rows: int,
+    ) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO csv_imports (
+                    filename, file_sha256, imported_at_utc,
+                    accepted_rows, rejected_rows, duplicate_rows
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    filename,
+                    file_sha256,
+                    utc_now(),
+                    accepted_rows,
+                    rejected_rows,
+                    duplicate_rows,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def create_job(self, request: JobRequest) -> int:
+        request.validate()
+        now = utc_now()
+        state = JobState.READY if request.url else JobState.PENDING
+        pinned_source = parse_youtube_url(request.url) if request.url else None
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO jobs (
+                    state, origin, requested_artist, requested_title, requested_version,
+                    requested_url, profile, import_id, import_row,
+                    source_extractor, source_id, source_url, resolution_method,
+                    created_at_utc, updated_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.value,
+                    request.origin,
+                    request.artist,
+                    request.title,
+                    request.version,
+                    request.url,
+                    request.profile,
+                    request.import_id,
+                    request.import_row,
+                    "youtube" if pinned_source else None,
+                    pinned_source.video_id if pinned_source else None,
+                    pinned_source.canonical_url if pinned_source else None,
+                    "exact_url" if pinned_source else None,
+                    now,
+                    now,
+                ),
+            )
+            job_id = int(cursor.lastrowid)
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state, event_type, message
+                ) VALUES (?, ?, NULL, ?, 'created', ?)
+                """,
+                (job_id, now, state.value, f"Created from {request.origin} input"),
+            )
+            return job_id
+
+    def get_job(self, job_id: int) -> sqlite3.Row:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"Job {job_id} does not exist")
+        return row
+
+    def list_jobs(self, state: JobState | None = None) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            if state:
+                return list(
+                    connection.execute(
+                        "SELECT * FROM jobs WHERE state = ? ORDER BY id", (state.value,)
+                    )
+                )
+            return list(connection.execute("SELECT * FROM jobs ORDER BY id"))
+
+    def transition_job(
+        self,
+        job_id: int,
+        new_state: JobState,
+        *,
+        message: str | None = None,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT state FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Job {job_id} does not exist")
+            old_state = JobState(row["state"])
+            ensure_transition(old_state, new_state)
+            now = utc_now()
+            completed_at = now if new_state in {
+                JobState.COMPLETED,
+                JobState.COMPLETED_WITH_WARNINGS,
+                JobState.SKIPPED_DUPLICATE,
+                JobState.NOT_FOUND,
+                JobState.CANCELLED,
+            } else None
+            connection.execute(
+                """
+                UPDATE jobs
+                SET state = ?, updated_at_utc = ?,
+                    started_at_utc = CASE
+                        WHEN started_at_utc IS NULL AND ? IN ('resolving', 'downloading') THEN ?
+                        ELSE started_at_utc
+                    END,
+                    completed_at_utc = COALESCE(?, completed_at_utc)
+                WHERE id = ?
+                """,
+                (new_state.value, now, new_state.value, now, completed_at, job_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message, detail_json
+                ) VALUES (?, ?, ?, ?, 'state_transition', ?, ?)
+                """,
+                (
+                    job_id,
+                    now,
+                    old_state.value,
+                    new_state.value,
+                    message,
+                    json.dumps(detail, sort_keys=True) if detail else None,
+                ),
+            )
+
+    def interrupt_active_jobs(self) -> int:
+        active_values = tuple(state.value for state in ACTIVE_STATES)
+        placeholders = ",".join("?" for _ in active_values)
+        now = utc_now()
+        with self.connect() as connection:
+            rows = list(
+                connection.execute(
+                    f"SELECT id, state FROM jobs WHERE state IN ({placeholders})", active_values
+                )
+            )
+            for row in rows:
+                connection.execute(
+                    "UPDATE jobs SET state = ?, updated_at_utc = ? WHERE id = ?",
+                    (JobState.INTERRUPTED.value, now, row["id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO job_events (
+                        job_id, occurred_at_utc, from_state, to_state, event_type, message
+                    ) VALUES (?, ?, ?, ?, 'recovery', ?)
+                    """,
+                    (
+                        row["id"],
+                        now,
+                        row["state"],
+                        JobState.INTERRUPTED.value,
+                        "Active job found during startup recovery",
+                    ),
+                )
+            return len(rows)

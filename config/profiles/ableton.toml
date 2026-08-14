@@ -1,0 +1,5 @@
+name = "ableton"
+source_master = true
+ableton_intermediate = true
+listening_derivative = false
+

@@ -1,0 +1,27 @@
+[app]
+host = "127.0.0.1"
+port = 8765
+open_browser = true
+poll_interval_seconds = 2.0
+
+[archive]
+root = "archive"
+temp_directory = "archive/temp"
+safe_wav_size_gib = 1.8
+segment_minutes = 60
+
+[tools]
+directory = "tools"
+yt_dlp = "yt-dlp"
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
+deno = "deno"
+
+[resolver]
+candidate_limit = 5
+auto_select_min_score = 90
+auto_select_min_margin = 15
+
+[input]
+max_csv_bytes = 5242880
+

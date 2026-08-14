@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audio-archive.local/schemas/archive-manifest-v1.2.schema.json",
+  "title": "Audio Archive Item Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "archive_id",
+    "content_type",
+    "request",
+    "resolution",
+    "source",
+    "acquisition",
+    "source_master",
+    "intermediates",
+    "derivatives"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.2" },
+    "archive_id": { "type": "string", "pattern": "^[a-z0-9_-]+:[A-Za-z0-9_-]+$" },
+    "content_type": {
+      "type": "string",
+      "enum": ["song", "dj_set", "lecture", "interview", "other"]
+    },
+    "request": { "$ref": "#/$defs/request" },
+    "resolution": { "$ref": "#/$defs/resolution" },
+    "source": { "$ref": "#/$defs/source" },
+    "acquisition": { "$ref": "#/$defs/acquisition" },
+    "source_master": { "$ref": "#/$defs/asset" },
+    "intermediates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/asset" }
+    },
+    "derivatives": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/asset" }
+    }
+  },
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "profile"],
+      "properties": {
+        "artist": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "version": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"], "format": "uri" },
+        "profile": {
+          "type": "string",
+          "enum": ["ableton", "archive", "listen", "complete"]
+        },
+        "origin": { "type": "string", "enum": ["manual", "url", "csv", "cli"] },
+        "import_filename": { "type": ["string", "null"] },
+        "import_file_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "import_row": { "type": ["integer", "null"], "minimum": 2 }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "resolver_version",
+        "selected_video_id",
+        "reviewed_by_user"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["automatic", "manual_selection", "exact_url"]
+        },
+        "resolver_version": { "type": "string" },
+        "selected_score": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "runner_up_score": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "selected_video_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{11}$" },
+        "reviewed_by_user": { "type": "boolean" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "id", "url", "title", "creator"],
+      "properties": {
+        "platform": { "const": "youtube" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{11}$" },
+        "url": { "type": "string", "format": "uri" },
+        "title": { "type": "string" },
+        "creator": { "type": ["string", "null"] },
+        "duration_seconds": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acquired_at_utc",
+        "quality_status",
+        "yt_dlp_version",
+        "ffmpeg_version",
+        "ffprobe_version",
+        "quality_warnings"
+      ],
+      "properties": {
+        "acquired_at_utc": { "type": "string", "format": "date-time" },
+        "quality_status": {
+          "type": "string",
+          "enum": [
+            "verified_best_available",
+            "best_available_with_warnings",
+            "fallback_source",
+            "failed"
+          ]
+        },
+        "yt_dlp_version": { "type": "string" },
+        "ffmpeg_version": { "type": "string" },
+        "ffprobe_version": { "type": "string" },
+        "deno_version": { "type": ["string", "null"] },
+        "quality_warnings": { "type": "array", "items": { "type": "string" } },
+        "used_combined_fallback": { "type": "boolean" }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["role", "path", "sha256"],
+      "properties": {
+        "role": { "type": "string" },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "source_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "container": { "type": ["string", "null"] },
+        "audio_codec": { "type": ["string", "null"] },
+        "audio_format": { "type": ["string", "null"] },
+        "format_id": { "type": ["string", "null"] },
+        "is_drc": { "type": ["boolean", "null"] },
+        "reported_bitrate_kbps": { "type": ["number", "null"], "minimum": 0 },
+        "sample_rate_hz": { "type": ["integer", "null"], "minimum": 1 },
+        "channels": { "type": ["integer", "null"], "minimum": 1, "maximum": 2 },
+        "normalization": { "type": "boolean" },
+        "resampled": { "type": "boolean" },
+        "dithered": { "type": "boolean" },
+        "segment_index": { "type": ["integer", "null"], "minimum": 1 },
+        "start_sample": { "type": ["integer", "null"], "minimum": 0 },
+        "end_sample": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nullableSha256": {
+      "anyOf": [
+        { "$ref": "#/$defs/sha256" },
+        { "type": "null" }
+      ]
+    }
+  }
+}
