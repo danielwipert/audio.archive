@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-08-17  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `agent/listening-derivatives`
+**Working branch:** `agent/sequential-worker`
 
 ## Session protocol
 
@@ -11,22 +11,23 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 ## Completed
 
-- PR #3 (verified Ableton derivative pipeline) was reviewed and squash-merged
-  into `main` as commit `d331426d36e0f6083495b73896b4ac6ac8bde78c`.
-- Added optional local-source-only listening MP3 generation with libmp3lame VBR
-  quality scale 0; no YouTube request is made during derivative creation.
-- Added curated title/artist and embedded source-thumbnail artwork, with FFprobe
-  verification of MP3 audio, source rate/channels, tags, and attached picture.
-- Added transactional manifest/checksum/log publication, source/output hashes,
-  encoder settings, conflict protection, and offline reuse of valid output.
-- Added SQLite listening assets, `audio-archive convert-listening JOB_ID`, and
-  order-independent completion for `listen` and `complete` profiles.
+- PR #4 (verified listening MP3 derivatives) was reviewed and squash-merged
+  into `main` as commit `5d74d2d06da7f8242fab053617287d58ca5d0bd9`.
+- Added the single sequential worker required by v0.3. It claims one runnable
+  SQLite job and runs acquisition plus all requested derivatives automatically.
+- Added exclusive process-aware claims so a second launcher cannot interrupt a
+  live worker; stale crash claims are cleared during safe startup recovery.
+- Added interrupted-job recovery from durable boundaries, output reuse, queue
+  continuation after recorded failures, pause-after-current/resume primitives,
+  retry counters, cancellation, and schema 1-to-2 migration.
+- Added `run-queue`, `run-queue --once`, `retry JOB_ID`, and `cancel JOB_ID`.
 
 ## Verification
 
-- 50 tests pass; every changed Python file passes Ruff and compilation checks.
-- A real FFmpeg test generates audio and artwork, creates the MP3, and verifies
-  the codec, rate, channels, curated tags, attached picture, manifest, and sums.
+- 59 tests pass; every changed Python file passes Ruff and compilation checks.
+- Tests cover exclusive claims, live-worker protection, stale-claim recovery,
+  interrupted requeue, retry history, pause/resume, failure isolation, pending
+  review bypass, sequential ordering, complete-profile stages, and DB migration.
 - Windows PowerShell/Ableton acceptance and an authorized live YouTube run are
   still required before permanent archive use.
 
@@ -37,9 +38,9 @@ Windows. Pre-release media remains test material only.
 
 ## Exact next step
 
-1. Review and merge the listening derivative PR.
-2. Build the recoverable background worker that claims queued jobs and runs the
-   shared acquisition and requested derivative stages.
-3. Complete resolver search/manual candidate review, then the local browser UI.
+1. Review and merge the sequential worker PR.
+2. Implement yt-dlp candidate search, deterministic resolution persistence, and
+   manual candidate approval/replacement/not-found actions.
+3. Build the single-screen local FastAPI browser interface on the shared queue.
 4. Run Windows setup and Ableton acceptance, then one authorized live YouTube
-   acquisition and audit a complete archive item.
+   `complete` job and audit the finished archive item.

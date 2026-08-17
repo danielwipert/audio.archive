@@ -1,6 +1,7 @@
+import sqlite3
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 
 from audio_archive.db import ArchiveDatabase
 from audio_archive.models import JobRequest, JobState
@@ -61,6 +62,47 @@ class DatabaseTests(unittest.TestCase):
         job = self.database.get_job(job_id)
         self.assertEqual(job["import_filename"], "songs.csv")
         self.assertEqual(job["import_file_sha256"], "a" * 64)
+
+    def test_worker_claim_is_exclusive_and_releasable(self) -> None:
+        job_id = self.database.create_job(
+            JobRequest(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", origin="url")
+        )
+        self.assertEqual(self.database.claim_next_runnable_job("worker-one"), job_id)
+        self.assertIsNone(self.database.claim_next_runnable_job("worker-two"))
+        self.assertFalse(self.database.release_worker_claim(job_id, "wrong-token"))
+        self.assertTrue(self.database.release_worker_claim(job_id, "worker-one"))
+        self.assertEqual(self.database.claim_next_runnable_job("worker-two"), job_id)
+
+    def test_retry_requeues_source_and_increments_counter(self) -> None:
+        job_id = self.database.create_job(
+            JobRequest(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", origin="url")
+        )
+        self.database.fail_job(job_id, stage="ready", summary="temporary failure")
+
+        target = self.database.retry_job(job_id)
+
+        job = self.database.get_job(job_id)
+        self.assertEqual(target, JobState.READY)
+        self.assertEqual(job["state"], JobState.READY.value)
+        self.assertEqual(job["retry_count"], 1)
+        self.assertIsNone(job["error_summary"])
+
+    def test_schema_one_database_migrates_worker_claim_table(self) -> None:
+        legacy_path = Path(self.temporary.name) / "legacy.db"
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY)")
+            connection.execute("PRAGMA user_version = 1")
+
+        legacy = ArchiveDatabase(legacy_path)
+        legacy.initialize()
+
+        with legacy.connect() as connection:
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'worker_claims'"
+            ).fetchone()
+        self.assertEqual(version, 2)
+        self.assertIsNotNone(table)
 
 
 if __name__ == "__main__":

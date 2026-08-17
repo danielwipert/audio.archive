@@ -101,3 +101,18 @@ source rate and mono/stereo layout, and the curated tags before publication.
 Encoder settings, source hash, output hash, metadata, and artwork presence are
 recorded in the durable manifest. A valid existing derivative is reused without
 network access.
+
+## DEC-010 — Sequential worker claims and recovery
+
+- **Status:** Accepted
+- **Date:** 2026-08-17
+
+The first release uses one sequential queue worker. A SQLite `worker_claims`
+lease prevents simultaneous workers from processing the same or different jobs
+under a single-worker policy. The claim includes the local process ID so a new
+launcher refuses to interrupt a live worker but can clear a stale crash claim.
+Startup marks active jobs interrupted and requeues them to `ready` when a source
+is pinned or `pending` when resolution is still required. Re-execution starts at
+the last durable boundary: verified archive items and derivatives are validated
+and reused, while yt-dlp may resume safe partial downloads in the job temporary
+directory. One recorded failure releases its claim and does not block later jobs.

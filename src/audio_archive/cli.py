@@ -14,6 +14,7 @@ from .inputs import attach_import_id, normalize_request, preview_csv
 from .models import JobState
 from .pipeline import acquire_ready_job, create_ableton_for_job, create_listening_for_job
 from .tooling import SubprocessRunner, ToolExecutionError
+from .worker import SequentialWorker
 
 
 def _database() -> tuple[ArchiveDatabase, object]:
@@ -107,6 +108,43 @@ def _convert_listening_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_queue_command(args: argparse.Namespace) -> int:
+    database, config = _database()
+    worker = SequentialWorker(database, config, SubprocessRunner())
+    recovery = worker.recover_startup()
+    if recovery.interrupted_jobs or recovery.stale_claims:
+        print(
+            f"Recovery: {recovery.interrupted_jobs} interrupted, "
+            f"{recovery.stale_claims} stale claim(s), {recovery.requeued_jobs} requeued"
+        )
+    results = (worker.run_next(),) if args.once else worker.run_until_idle()
+    completed = [result for result in results if result is not None]
+    if not completed:
+        print("No runnable jobs")
+        return 0
+    failed = False
+    for result in completed:
+        print(f"Job {result.job_id}: {result.state.value}")
+        if result.error:
+            print(f"  {result.error}")
+        failed = failed or result.state == JobState.FAILED
+    return 1 if failed else 0
+
+
+def _retry_command(args: argparse.Namespace) -> int:
+    database, _ = _database()
+    state = database.retry_job(args.job_id)
+    print(f"Job {args.job_id} queued for retry as {state.value}")
+    return 0
+
+
+def _cancel_command(args: argparse.Namespace) -> int:
+    database, _ = _database()
+    database.transition_job(args.job_id, JobState.CANCELLED, message="Cancelled by user")
+    print(f"Cancelled job {args.job_id}")
+    return 0
+
+
 def _verify_command(args: argparse.Namespace) -> int:
     config = load_config()
     if args.all:
@@ -180,6 +218,20 @@ def build_parser() -> argparse.ArgumentParser:
     convert_listening.add_argument("job_id", type=int)
     convert_listening.set_defaults(handler=_convert_listening_command)
 
+    run_queue = subparsers.add_parser(
+        "run-queue", help="recover and process queued exact-URL jobs sequentially"
+    )
+    run_queue.add_argument("--once", action="store_true", help="process at most one job")
+    run_queue.set_defaults(handler=_run_queue_command)
+
+    retry = subparsers.add_parser("retry", help="requeue one failed or interrupted job")
+    retry.add_argument("job_id", type=int)
+    retry.set_defaults(handler=_retry_command)
+
+    cancel = subparsers.add_parser("cancel", help="cancel one waiting job")
+    cancel.add_argument("job_id", type=int)
+    cancel.set_defaults(handler=_cancel_command)
+
     verify = subparsers.add_parser("verify", help="verify archive checksums and manifest assets")
     verify_target = verify.add_mutually_exclusive_group(required=True)
     verify_target.add_argument("target", nargs="?", help="video ID or archive item directory")
@@ -197,9 +249,14 @@ def _init_command() -> int:
     config.temp_directory.mkdir(parents=True, exist_ok=True)
     (config.archive_root / "items" / "youtube").mkdir(parents=True, exist_ok=True)
     interrupted = database.interrupt_active_jobs()
+    stale_claims = database.clear_worker_claims()
+    requeued = database.recover_interrupted_jobs()
     print(f"Archive initialized at {config.archive_root}")
-    if interrupted:
-        print(f"Marked {interrupted} active job(s) interrupted for recovery")
+    if interrupted or stale_claims:
+        print(
+            f"Recovered {requeued} interrupted job(s) and cleared "
+            f"{stale_claims} stale worker claim(s)"
+        )
     return 0
 
 
