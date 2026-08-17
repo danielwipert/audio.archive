@@ -60,3 +60,16 @@ with its matching default EJS components and supplies the controlled Deno path
 explicitly. If that runtime is unavailable or too old, acquisition fails before
 download rather than claiming that a restricted format set is the verified best
 available source.
+
+## DEC-007 — Portable Windows toolchain
+
+- **Status:** Accepted
+- **Date:** 2026-08-17
+
+The Windows setup script installs missing Deno and FFmpeg packages through
+Windows Package Manager, then copies Deno, FFmpeg, and FFprobe executables into
+the project `tools/` directory. yt-dlp and its EJS components live in the
+project virtual environment at exact application-compatible versions. Runtime
+tool resolution prefers these project-controlled locations and does not embed a
+drive letter or user-specific path. Updates occur only through the explicit
+maintenance script.

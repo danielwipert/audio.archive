@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from .acquisition import ExistingArchiveConflict
 from .config import load_config
 from .db import ArchiveDatabase
+from .doctor import format_report, run_doctor
 from .inputs import attach_import_id, normalize_request, preview_csv
 from .models import JobState
-from .acquisition import ExistingArchiveConflict
 from .pipeline import acquire_ready_job
 from .tooling import SubprocessRunner, ToolExecutionError
 
@@ -77,6 +79,13 @@ def _acquire_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _doctor_command(args: argparse.Namespace) -> int:
+    config = load_config()
+    report = run_doctor(config, SubprocessRunner())
+    print(json.dumps(report.as_dict(), indent=2) if args.json else format_report(report))
+    return 0 if report.ready else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="audio-archive")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -106,6 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     acquire.add_argument("job_id", type=int)
     acquire.set_defaults(handler=_acquire_command)
+
+    doctor = subparsers.add_parser("doctor", help="verify the complete local toolchain")
+    doctor.add_argument("--json", action="store_true", help="emit machine-readable diagnostics")
+    doctor.set_defaults(handler=_doctor_command)
     return parser
 
 

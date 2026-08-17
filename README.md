@@ -22,8 +22,34 @@ with FFprobe, demuxes combined fallbacks with codec copy, writes SHA-256
 integrity records, and atomically publishes a complete archive item.
 
 Audio Archive is not yet ready for normal archive use. Ableton conversion,
-resolver search, the worker, the browser interface, portable Windows dependency
-setup, and end-to-end acceptance tests remain incomplete.
+resolver search, the worker, the browser interface, and end-to-end acceptance
+tests remain incomplete.
+
+## Windows setup
+
+Python 3.11 or newer and Windows Package Manager (`winget`) are required. Run
+the one-time setup from PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+Setup creates the project virtual environment, installs the pinned yt-dlp and
+matching EJS components, locates or installs Deno, FFmpeg, and FFprobe, copies
+the external executables into `tools/`, initializes the archive, and runs the
+complete readiness check. It does not update tools during ordinary ingestion.
+
+You can repeat the non-mutating readiness check at any time:
+
+```powershell
+.venv\Scripts\python.exe -m audio_archive doctor
+```
+
+External tool updates are an explicit maintenance action:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\update-tools.ps1
+```
 
 ## Development setup
 
