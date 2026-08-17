@@ -12,7 +12,7 @@ from .db import ArchiveDatabase
 from .doctor import format_report, run_doctor
 from .inputs import attach_import_id, normalize_request, preview_csv
 from .models import JobState
-from .pipeline import acquire_ready_job, create_ableton_for_job
+from .pipeline import acquire_ready_job, create_ableton_for_job, create_listening_for_job
 from .tooling import SubprocessRunner, ToolExecutionError
 
 
@@ -99,6 +99,14 @@ def _convert_ableton_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _convert_listening_command(args: argparse.Namespace) -> int:
+    database, config = _database()
+    result = create_listening_for_job(database, config, SubprocessRunner(), args.job_id)
+    print(f"Listening MP3: {result.asset.path}")
+    print(f"Reused existing output: {'yes' if result.reused_existing else 'no'}")
+    return 0
+
+
 def _verify_command(args: argparse.Namespace) -> int:
     config = load_config()
     if args.all:
@@ -165,6 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     convert_ableton.add_argument("job_id", type=int)
     convert_ableton.set_defaults(handler=_convert_ableton_command)
+
+    convert_listening = subparsers.add_parser(
+        "convert-listening", help="create or reuse a verified listening MP3"
+    )
+    convert_listening.add_argument("job_id", type=int)
+    convert_listening.set_defaults(handler=_convert_listening_command)
 
     verify = subparsers.add_parser("verify", help="verify archive checksums and manifest assets")
     verify_target = verify.add_mutually_exclusive_group(required=True)

@@ -6,8 +6,40 @@ from .ableton import AbletonResult, AbletonService
 from .acquisition import AcquisitionRequest, AcquisitionResult, AcquisitionService
 from .config import AppConfig
 from .db import ArchiveDatabase
+from .listening import ListeningResult, ListeningService
 from .models import JobState
 from .tooling import CommandRunner
+
+
+def _finish_derivative_job_if_complete(
+    database: ArchiveDatabase,
+    job_id: int,
+    *,
+    archive_id: str,
+    profile: str,
+) -> bool:
+    roles = {row["role"] for row in database.list_assets(archive_id)}
+    required = {
+        "ableton": {"ableton"},
+        "listen": {"listening"},
+        "complete": {"ableton", "listening"},
+    }[profile]
+    if not required <= roles:
+        return False
+    database.transition_job(
+        job_id,
+        JobState.VERIFYING_OUTPUT,
+        message="All requested derivative outputs passed probe and integrity verification",
+        detail={"required_roles": sorted(required)},
+    )
+    job = database.get_job(job_id)
+    final_state = (
+        JobState.COMPLETED
+        if job["quality_status"] == "verified_best_available"
+        else JobState.COMPLETED_WITH_WARNINGS
+    )
+    database.transition_job(job_id, final_state, message=f"{profile} profile completed")
+    return True
 
 
 def acquire_ready_job(
@@ -134,20 +166,68 @@ def create_ableton_for_job(
             ],
             reused_existing=result.reused_existing,
         )
-        if job["profile"] == "complete":
-            return result
-        database.transition_job(
+        _finish_derivative_job_if_complete(
+            database,
             job_id,
-            JobState.VERIFYING_OUTPUT,
-            message="Ableton output probe and integrity verification passed",
-            detail={"segmented": result.segmented, "asset_count": len(result.assets)},
+            archive_id=result.archive_id,
+            profile=job["profile"],
         )
-        final_state = (
-            JobState.COMPLETED
-            if job["quality_status"] == "verified_best_available"
-            else JobState.COMPLETED_WITH_WARNINGS
+        return result
+    except Exception as exc:
+        current = JobState(database.get_job(job_id)["state"])
+        if current in {JobState.CONVERTING, JobState.VERIFYING_OUTPUT}:
+            database.fail_job(job_id, stage=current.value, summary=str(exc))
+        raise
+
+
+def create_listening_for_job(
+    database: ArchiveDatabase,
+    config: AppConfig,
+    runner: CommandRunner,
+    job_id: int,
+) -> ListeningResult:
+    job = database.get_job(job_id)
+    if JobState(job["state"]) != JobState.CONVERTING:
+        raise ValueError(f"Job {job_id} must be converting; current state is {job['state']}")
+    if job["profile"] not in {"listen", "complete"}:
+        raise ValueError(f"Job profile {job['profile']} does not request a listening output")
+    if job["source_extractor"] != "youtube" or not job["source_id"]:
+        raise ValueError(f"Job {job_id} does not have a pinned YouTube source")
+    archive_item = database.find_archive_item("youtube", job["source_id"])
+    if archive_item is None:
+        raise ValueError(f"Job {job_id} has no verified archive item")
+
+    try:
+        result = ListeningService(config, runner).create(
+            Path(archive_item["item_directory"]),
+            job_id=job_id,
         )
-        database.transition_job(job_id, final_state, message="Ableton profile completed")
+        asset = result.asset
+        database.record_listening_output(
+            job_id,
+            archive_id=result.archive_id,
+            relative_path=asset.relative_path,
+            sha256=asset.sha256,
+            media_properties={
+                "audio_format": "mp3",
+                "encoder": "libmp3lame",
+                "quality_mode": "VBR",
+                "quality_scale": 0,
+                "sample_rate_hz": asset.sample_rate_hz,
+                "channels": asset.channels,
+                "bitrate_bps": asset.bitrate_bps,
+                "embedded_artwork": True,
+                "title": asset.title,
+                "artist": asset.artist,
+            },
+            reused_existing=result.reused_existing,
+        )
+        _finish_derivative_job_if_complete(
+            database,
+            job_id,
+            archive_id=result.archive_id,
+            profile=job["profile"],
+        )
         return result
     except Exception as exc:
         current = JobState(database.get_job(job_id)["state"])

@@ -27,9 +27,15 @@ filters, or dither; preserves the source rate and mono/stereo layout; segments
 long-form audio beneath the configured safe size; records exact contiguous sample
 boundaries; and updates the manifest and checksums transactionally.
 
-Audio Archive is not yet ready for normal archive use. Listening derivatives,
-resolver search, the worker, the browser interface, Windows/Ableton acceptance,
-and complete end-to-end tests remain incomplete.
+The listening derivative slice also reads only the verified local master. It
+encodes a highest-quality VBR MP3 with libmp3lame, embeds curated title and
+artist tags plus the preserved source thumbnail, verifies all streams and tags
+with FFprobe, and records the encoder settings and checksums transactionally.
+Existing valid listening derivatives are reused without contacting YouTube.
+
+Audio Archive is not yet ready for normal archive use. Resolver search, the
+background worker, the browser interface, Windows/Ableton acceptance, and live
+authorized end-to-end tests remain incomplete.
 
 ## Windows setup
 
@@ -88,9 +94,15 @@ intermediate after acquisition:
 audio-archive convert-ableton 1
 ```
 
-The `ableton` profile completes after output verification. The `complete`
-profile remains in `converting` until the listening derivative is also present;
-it is never reported complete with only part of its requested outputs.
+For a `listen` or `complete` profile, create or reuse the verified listening MP3:
+
+```powershell
+audio-archive convert-listening 1
+```
+
+The `ableton` and `listen` profiles complete after their requested output is
+verified. The `complete` profile completes only after both outputs exist and
+pass verification, regardless of which conversion command runs first.
 
 Verify one item by YouTube ID, or verify the complete archive:
 
