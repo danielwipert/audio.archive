@@ -40,3 +40,23 @@ The acquisition environment initially pins yt-dlp `2026.7.4`, the current stable
 release when implementation began. Tool upgrades are explicit maintenance
 events and never occur during an ordinary acquisition.
 
+## DEC-005 — Full release before archive use
+
+- **Status:** Accepted
+- **Date:** 2026-08-17
+
+The permanent archive will not begin with a partial alpha workflow. Normal use
+starts only after all v0.3 first-release acceptance criteria pass on Windows.
+Media used before that point is test material and must not be treated as the
+beginning of the permanent collection.
+
+## DEC-006 — YouTube JavaScript runtime
+
+- **Status:** Accepted
+- **Date:** 2026-08-17
+
+Deno 2.3.0 or newer is required for acquisition. The project installs yt-dlp
+with its matching default EJS components and supplies the controlled Deno path
+explicitly. If that runtime is unavailable or too old, acquisition fails before
+download rather than claiming that a restricted format set is the verified best
+available source.

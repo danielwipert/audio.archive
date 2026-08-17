@@ -221,7 +221,17 @@ class ArchiveDatabase:
 
     def get_job(self, job_id: int) -> sqlite3.Row:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = connection.execute(
+                """
+                SELECT jobs.*,
+                       csv_imports.filename AS import_filename,
+                       csv_imports.file_sha256 AS import_file_sha256
+                FROM jobs
+                LEFT JOIN csv_imports ON csv_imports.id = jobs.import_id
+                WHERE jobs.id = ?
+                """,
+                (job_id,),
+            ).fetchone()
         if row is None:
             raise KeyError(f"Job {job_id} does not exist")
         return row
@@ -235,6 +245,139 @@ class ArchiveDatabase:
                     )
                 )
             return list(connection.execute("SELECT * FROM jobs ORDER BY id"))
+
+    def find_archive_item(self, extractor: str, source_id: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT * FROM archive_items WHERE extractor = ? AND source_id = ?",
+                (extractor, source_id),
+            ).fetchone()
+
+    def record_acquisition(
+        self,
+        job_id: int,
+        *,
+        archive_id: str,
+        source_id: str,
+        source_title: str,
+        source_creator: str | None,
+        item_directory: str,
+        manifest_path: str,
+        quality_status: str,
+        master_relative_path: str,
+        master_sha256: str,
+        media_properties: dict[str, object],
+        warnings: list[str],
+    ) -> None:
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE jobs
+                SET source_title = ?, source_creator = ?, quality_status = ?,
+                    warning_summary = ?, progress_percent = 100, updated_at_utc = ?
+                WHERE id = ?
+                """,
+                (
+                    source_title,
+                    source_creator,
+                    quality_status,
+                    " | ".join(warnings) if warnings else None,
+                    now,
+                    job_id,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO archive_items (
+                    archive_id, extractor, source_id, item_directory, manifest_path,
+                    quality_status, source_master_sha256, verified_at_utc
+                ) VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(archive_id) DO UPDATE SET
+                    item_directory = excluded.item_directory,
+                    manifest_path = excluded.manifest_path,
+                    quality_status = excluded.quality_status,
+                    source_master_sha256 = excluded.source_master_sha256,
+                    verified_at_utc = excluded.verified_at_utc
+                """,
+                (
+                    archive_id,
+                    source_id,
+                    item_directory,
+                    manifest_path,
+                    quality_status,
+                    master_sha256,
+                    now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO assets (
+                    archive_id, role, relative_path, sha256,
+                    media_properties_json, verified_at_utc
+                ) VALUES (?, 'source_master', ?, ?, ?, ?)
+                ON CONFLICT(archive_id, role, relative_path) DO UPDATE SET
+                    sha256 = excluded.sha256,
+                    media_properties_json = excluded.media_properties_json,
+                    verified_at_utc = excluded.verified_at_utc
+                """,
+                (
+                    archive_id,
+                    master_relative_path,
+                    master_sha256,
+                    json.dumps(media_properties, sort_keys=True),
+                    now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message, detail_json
+                ) VALUES (?, ?, 'verifying_master', 'verifying_master',
+                          'acquisition_recorded', ?, ?)
+                """,
+                (
+                    job_id,
+                    now,
+                    f"Recorded verified source master {master_relative_path}",
+                    json.dumps(
+                        {
+                            "archive_id": archive_id,
+                            "quality_status": quality_status,
+                            "sha256": master_sha256,
+                        },
+                        sort_keys=True,
+                    ),
+                ),
+            )
+
+    def fail_job(self, job_id: int, *, stage: str, summary: str) -> None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT state FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"Job {job_id} does not exist")
+            old_state = JobState(row["state"])
+            ensure_transition(old_state, JobState.FAILED)
+            now = utc_now()
+            connection.execute(
+                """
+                UPDATE jobs
+                SET state = 'failed', error_stage = ?, error_summary = ?,
+                    updated_at_utc = ?
+                WHERE id = ?
+                """,
+                (stage, summary[:2000], now, job_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message
+                ) VALUES (?, ?, ?, 'failed', 'stage_failure', ?)
+                """,
+                (job_id, now, old_state.value, summary[:2000]),
+            )
 
     def transition_job(
         self,
