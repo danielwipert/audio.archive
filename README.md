@@ -21,9 +21,15 @@ format access, preserves the source info record and thumbnail, verifies media
 with FFprobe, demuxes combined fallbacks with codec copy, writes SHA-256
 integrity records, and atomically publishes a complete archive item.
 
-Audio Archive is not yet ready for normal archive use. Ableton conversion,
-resolver search, the worker, the browser interface, and end-to-end acceptance
-tests remain incomplete.
+The Ableton derivative slice decodes only from that verified local master. It
+creates 32-bit float PCM WAV without normalization, resampling, channel remixing,
+filters, or dither; preserves the source rate and mono/stereo layout; segments
+long-form audio beneath the configured safe size; records exact contiguous sample
+boundaries; and updates the manifest and checksums transactionally.
+
+Audio Archive is not yet ready for normal archive use. Listening derivatives,
+resolver search, the worker, the browser interface, Windows/Ableton acceptance,
+and complete end-to-end tests remain incomplete.
 
 ## Windows setup
 
@@ -75,9 +81,26 @@ The development-only acquisition command accepts the ID of a `ready` job:
 audio-archive acquire 1
 ```
 
-For an `archive` profile, a verified acquisition completes the job. Profiles
-that require a derivative advance to `converting`; derivative execution is the
-next implementation slice and is not yet available.
+For an `ableton` or `complete` profile, create or reuse the verified Ableton
+intermediate after acquisition:
+
+```powershell
+audio-archive convert-ableton 1
+```
+
+The `ableton` profile completes after output verification. The `complete`
+profile remains in `converting` until the listening derivative is also present;
+it is never reported complete with only part of its requested outputs.
+
+Verify one item by YouTube ID, or verify the complete archive:
+
+```powershell
+audio-archive verify VIDEO_ID
+powershell -ExecutionPolicy Bypass -File scripts\verify-archive.ps1 -All
+```
+
+Verification cross-checks `SHA256SUMS`, the archive manifest, and every canonical,
+intermediate, and derivative asset recorded by the manifest.
 
 The application is intended only for media you own or are authorized to
 download and archive.

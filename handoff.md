@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-08-17  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `agent/windows-toolchain-setup`
+**Working branch:** `agent/ableton-derivatives`
 
 ## Session protocol
 
@@ -11,31 +11,37 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 ## Completed
 
-- Native source-master acquisition was reviewed and squash-merged into `main`
-  as commit `4a4409454a9b3bcb0984d263c4272ff65caf5911` (PR #1).
-- Added project-first tool resolution, including the active virtual
-  environment's Scripts directory for the pinned yt-dlp executable.
-- Added non-mutating `audio-archive doctor` text and JSON diagnostics for:
-  Python 3.11+, exact yt-dlp pin, Deno 2.3+, FFmpeg, FFprobe, yt-dlp EJS,
-  loopback-only binding, and writable archive location.
-- Reworked `scripts/setup.ps1` to create the virtual environment, install the
-  pinned Python dependencies, locate or install Deno and FFmpeg through winget,
-  bundle the external executables under `tools/`, initialize the archive, and
-  require a passing readiness check.
-- Added `scripts/update-tools.ps1` as the only explicit external-tool update
-  path; ordinary ingestion never updates dependencies.
-- Documented the setup workflow and portable-toolchain decision.
+- PR #2 (portable Windows toolchain and `doctor`) was reviewed and squash-merged
+  into `main` as commit `6ed213965a67ceec44d701e8ef5de7f5a5b8e882`.
+- Added local-source-only Ableton conversion to 32-bit float PCM WAV.
+- Conversion preserves source sample rate and mono/stereo channels and supplies
+  no normalization, resampling, channel remixing, filters, or dither.
+- Added safe-size planning that shortens segments for unusually high source
+  rates so every generated WAV remains beneath the configured threshold.
+- Added one-pass long-form segmentation with exact sample counts, contiguous
+  start/end sample records, ordered filenames, FFprobe validation, and SHA-256.
+- Added transactional publication with manifest/checksum rollback on failure.
+- Added offline reuse of an existing valid Ableton output and creation of a
+  previously missing output without another YouTube request.
+- Added SQLite Ableton asset records and job-state integration. `ableton`
+  profiles complete only after verification; `complete` remains converting
+  until its listening output also exists.
+- Added `audio-archive convert-ableton JOB_ID`.
+- Added `audio-archive verify VIDEO_ID`, `verify --all`, and
+  `scripts/verify-archive.ps1` to cross-check SHA256SUMS, manifest inventory, and
+  every manifest-recorded asset.
 
 ## Verification
 
-- 37 deterministic tests pass.
-- Changed Python files pass Ruff checks and all Python sources compile.
-- A real local doctor run found the exact yt-dlp pin, EJS 0.8.0, FFmpeg, and
-  FFprobe, and correctly returned `NOT READY` because this Linux build host has
-  no Deno.
-- Windows PowerShell execution is not available in this build host, so the
-  setup script still requires its first Windows acceptance run.
-- Live YouTube acquisition remains untested; it requires an authorized test URL.
+- 46 tests pass and all changed Python files pass Ruff and compilation checks.
+- A real FFmpeg test generated source audio, forced segmentation, and proved
+  that concatenated segment PCM is byte-identical to one unsegmented 32-bit
+  float decode.
+- Manifest assets, SQLite assets, contiguous sample boundaries, output reuse,
+  high-rate size limits, tamper detection, and profile completion are covered.
+- Windows PowerShell and Ableton execution are unavailable on this build host;
+  Windows setup and Ableton-open acceptance remain outstanding.
+- Live YouTube acquisition remains untested and requires an authorized test URL.
 
 ## Project-use decision
 
@@ -44,11 +50,12 @@ Windows. Pre-release media remains test material only.
 
 ## Exact next step
 
-1. Review and merge the Windows toolchain PR.
-2. Implement Ableton 32-bit float WAV conversion from the verified local source
-   master, including real safe-size long-form segmentation and regeneration.
-3. Add the archive verification command and PowerShell wrapper.
-4. Run Windows setup acceptance, then one authorized live YouTube acquisition
-   and audit its media, metadata, warnings, checksums, and archive structure.
+1. Review and merge the Ableton derivative PR.
+2. Implement the optional listening MP3 directly from the verified local source
+   master, including metadata, artwork, reuse, manifests, checksums, and the
+   `listen`/`complete` profile completion rules.
+3. Build the background worker around the shared acquisition/derivative pipeline.
+4. Run Windows setup and Ableton acceptance, then one authorized live YouTube
+   acquisition and audit the complete archive item.
 
-Do not build the GUI until acquisition and derivative generation are reliable.
+Do not build the GUI until all shared pipeline stages are reliable.
