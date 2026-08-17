@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
 import os
 import shutil
 import subprocess
-from typing import Protocol, Sequence
+import sys
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,11 @@ def resolve_tool(configured: str, tools_directory: Path) -> str:
         bundled = tools_directory / name
         if bundled.is_file():
             return str(bundled.resolve())
+    scripts_directory = Path(sys.executable).resolve().parent
+    for name in names:
+        environment_tool = scripts_directory / name
+        if environment_tool.is_file():
+            return str(environment_tool)
     located = shutil.which(configured)
     if located:
         return located
@@ -67,8 +74,7 @@ class SubprocessRunner:
             [str(part) for part in argv],
             cwd=cwd,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -93,4 +99,3 @@ def read_tool_version(runner: CommandRunner, tool: str, *args: str) -> str:
     result = runner.run((tool, *args))
     output = result.stdout.strip() or result.stderr.strip()
     return output.splitlines()[0].strip() if output else "unknown"
-

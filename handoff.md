@@ -2,63 +2,53 @@
 
 **Last updated:** 2026-08-17  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `agent/native-master-acquisition`
+**Working branch:** `agent/windows-toolchain-setup`
 
 ## Session protocol
 
 Read this file first. At session end, overwrite it with the current verified
 state and exact next step. Keep it short; this is not a cumulative changelog.
-Describe only work present on the branch named above.
 
-## Completed on this branch
+## Completed
 
-The native source-master acquisition vertical slice is implemented:
+- Native source-master acquisition was reviewed and squash-merged into `main`
+  as commit `4a4409454a9b3bcb0984d263c4272ff65caf5911` (PR #1).
+- Added project-first tool resolution, including the active virtual
+  environment's Scripts directory for the pinned yt-dlp executable.
+- Added non-mutating `audio-archive doctor` text and JSON diagnostics for:
+  Python 3.11+, exact yt-dlp pin, Deno 2.3+, FFmpeg, FFprobe, yt-dlp EJS,
+  loopback-only binding, and writable archive location.
+- Reworked `scripts/setup.ps1` to create the virtual environment, install the
+  pinned Python dependencies, locate or install Deno and FFmpeg through winget,
+  bundle the external executables under `tools/`, initialize the archive, and
+  require a passing readiness check.
+- Added `scripts/update-tools.ps1` as the only explicit external-tool update
+  path; ordinary ingestion never updates dependencies.
+- Documented the setup workflow and portable-toolchain decision.
 
-- Shell-free controlled subprocess execution and portable tool resolution
-- Required Deno 2.3+ runtime with explicit yt-dlp runtime selection
-- yt-dlp default EJS dependency group pinned with the application version
-- `--ignore-config`, `--no-playlist`, and `bestaudio/best` acquisition policy
-- Pinned video-ID verification before publication
-- Unmodified source info JSON and source-thumbnail preservation
-- FFprobe inspection requiring exactly one audio stream in the source master
-- Combined-stream fallback demuxed with FFmpeg codec copy and no re-encoding
-- Quality-warning classification for JavaScript, challenge, token,
-  authentication, format, region, and throttling limitations
-- Quality status protection against overstating “verified best available”
-- SHA-256 generation and archive-item integrity verification
-- Atomic publication under the stable YouTube video ID
-- Existing-item integrity validation and acquisition reuse
-- SQLite acquisition records, asset records, stage transitions, and failure state
-- Retained diagnostic logs when acquisition fails
-- Development CLI entry point for one ready job
+## Verification
 
-Validation completed:
-
-- 34 deterministic tests pass.
-- A locally generated WAV passed the real FFprobe execution path.
-- Python source compiles and the archive manifest schema remains valid JSON.
-
-Not run:
-
-- Live YouTube acquisition. The current build environment lacks yt-dlp and Deno,
-  and no authorized network-test URL was supplied. Do not imply this passed.
+- 37 deterministic tests pass.
+- Changed Python files pass Ruff checks and all Python sources compile.
+- A real local doctor run found the exact yt-dlp pin, EJS 0.8.0, FFmpeg, and
+  FFprobe, and correctly returned `NOT READY` because this Linux build host has
+  no Deno.
+- Windows PowerShell execution is not available in this build host, so the
+  setup script still requires its first Windows acceptance run.
+- Live YouTube acquisition remains untested; it requires an authorized test URL.
 
 ## Project-use decision
 
-Do not begin the permanent archive with a partial build. Normal use begins only
-after all v0.3 first-release acceptance criteria pass on Windows. Pre-release
-media is test material only.
+Do not begin the permanent archive until all v0.3 acceptance criteria pass on
+Windows. Pre-release media remains test material only.
 
-## Next step
+## Exact next step
 
-Review and merge the native-master acquisition branch. Then:
+1. Review and merge the Windows toolchain PR.
+2. Implement Ableton 32-bit float WAV conversion from the verified local source
+   master, including real safe-size long-form segmentation and regeneration.
+3. Add the archive verification command and PowerShell wrapper.
+4. Run Windows setup acceptance, then one authorized live YouTube acquisition
+   and audit its media, metadata, warnings, checksums, and archive structure.
 
-1. Finish portable Windows installation and dependency diagnostics for yt-dlp,
-   matching EJS components, Deno, FFmpeg, and FFprobe.
-2. Run one authorized live acquisition integration test and audit its master,
-   metadata, warning status, checksums, and archive structure.
-3. Build Ableton 32-bit float WAV conversion, real long-form segmentation, and
-   derivative regeneration from the verified local source master.
-
-Do not build the GUI until the shared acquisition and derivative pipeline is
-reliable.
+Do not build the GUI until acquisition and derivative generation are reliable.
