@@ -7,6 +7,9 @@ from .config import load_config
 from .db import ArchiveDatabase
 from .inputs import attach_import_id, normalize_request, preview_csv
 from .models import JobState
+from .acquisition import ExistingArchiveConflict
+from .pipeline import acquire_ready_job
+from .tooling import SubprocessRunner, ToolExecutionError
 
 
 def _database() -> tuple[ArchiveDatabase, object]:
@@ -66,6 +69,14 @@ def _list_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _acquire_command(args: argparse.Namespace) -> int:
+    database, config = _database()
+    result = acquire_ready_job(database, config, SubprocessRunner(), args.job_id)
+    print(f"Source master: {result.master_path}")
+    print(f"Quality status: {result.quality_status}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="audio-archive")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -89,6 +100,12 @@ def build_parser() -> argparse.ArgumentParser:
     list_jobs = subparsers.add_parser("list", help="list persistent jobs")
     list_jobs.add_argument("--state", choices=[state.value for state in JobState])
     list_jobs.set_defaults(handler=_list_command)
+
+    acquire = subparsers.add_parser(
+        "acquire", help="run the native-master stage for one ready job"
+    )
+    acquire.add_argument("job_id", type=int)
+    acquire.set_defaults(handler=_acquire_command)
     return parser
 
 
@@ -108,7 +125,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.handler(args))
-    except (FileNotFoundError, KeyError, ValueError) as exc:
+    except (
+        ExistingArchiveConflict,
+        FileNotFoundError,
+        KeyError,
+        ToolExecutionError,
+        ValueError,
+    ) as exc:
         parser.error(str(exc))
     return 2
-

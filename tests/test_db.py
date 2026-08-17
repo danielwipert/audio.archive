@@ -41,6 +41,27 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(self.database.interrupt_active_jobs(), 1)
         self.assertEqual(self.database.get_job(job_id)["state"], JobState.INTERRUPTED.value)
 
+    def test_csv_provenance_is_available_with_job(self) -> None:
+        import_id = self.database.create_csv_import(
+            filename="songs.csv",
+            file_sha256="a" * 64,
+            accepted_rows=1,
+            rejected_rows=0,
+            duplicate_rows=0,
+        )
+        job_id = self.database.create_job(
+            JobRequest(
+                artist="Portishead",
+                title="Roads",
+                origin="csv",
+                import_id=import_id,
+                import_row=2,
+            )
+        )
+        job = self.database.get_job(job_id)
+        self.assertEqual(job["import_filename"], "songs.csv")
+        self.assertEqual(job["import_file_sha256"], "a" * 64)
+
 
 if __name__ == "__main__":
     unittest.main()

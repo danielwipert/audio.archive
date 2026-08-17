@@ -1,73 +1,64 @@
 # Audio Archive — Session Handoff
 
-**Last updated:** 2026-08-14  
+**Last updated:** 2026-08-17  
 **Repository:** `danielwipert/audio.archive`  
-**Branch:** `main`
+**Working branch:** `agent/native-master-acquisition`
 
-## How to use this file
+## Session protocol
 
-Read this file at the beginning of every working session. At the end of the
-session, overwrite it with the current state of the project. Keep it short and
-operational: what was completed, what was verified, what remains unresolved,
-and the exact next step. This is a handoff checkpoint, not a cumulative history
-or changelog.
+Read this file first. At session end, overwrite it with the current verified
+state and exact next step. Keep it short; this is not a cumulative changelog.
+Describe only work present on the branch named above.
 
-Only describe work that is actually present on the repository branch named
-above. Do not report uncommitted or unverified work as complete.
+## Completed on this branch
 
-## Current state
+The native source-master acquisition vertical slice is implemented:
 
-The approved v0.3 specification has entered implementation. The first
-application foundation is committed to `main` in foundation commit
-`28df8ca386d2dea74fe24e7deb01b72803bb417c`.
+- Shell-free controlled subprocess execution and portable tool resolution
+- Required Deno 2.3+ runtime with explicit yt-dlp runtime selection
+- yt-dlp default EJS dependency group pinned with the application version
+- `--ignore-config`, `--no-playlist`, and `bestaudio/best` acquisition policy
+- Pinned video-ID verification before publication
+- Unmodified source info JSON and source-thumbnail preservation
+- FFprobe inspection requiring exactly one audio stream in the source master
+- Combined-stream fallback demuxed with FFmpeg codec copy and no re-encoding
+- Quality-warning classification for JavaScript, challenge, token,
+  authentication, format, region, and throttling limitations
+- Quality status protection against overstating “verified best available”
+- SHA-256 generation and archive-item integrity verification
+- Atomic publication under the stable YouTube video ID
+- Existing-item integrity validation and acquisition reuse
+- SQLite acquisition records, asset records, stage transitions, and failure state
+- Retained diagnostic logs when acquisition fails
+- Development CLI entry point for one ready job
 
-Completed and verified:
+Validation completed:
 
-- Portable TOML configuration and four output profiles
-- SQLite schema version 1 for jobs, events, candidates, imports, archive items,
-  and assets
-- Audited job-state transitions and startup interruption recovery
-- Manual, exact-URL, and CSV job creation through the shared Python core
-- YouTube URL validation, canonicalization, and source-ID pinning
-- CSV validation, row-level rejection, provenance, and within-import deduplication
-- Deterministic resolver scoring and automatic-selection thresholds
-- Ableton 32-bit float WAV size estimation and long-form segmentation planning
-- Archive manifest JSON schema version 1.2
-- Initial Windows setup and launcher scripts
-- Twenty-two passing deterministic tests and a successful CLI smoke test
+- 34 deterministic tests pass.
+- A locally generated WAV passed the real FFprobe execution path.
+- Python source compiles and the archive manifest schema remains valid JSON.
 
-## Not yet implemented
+Not run:
 
-- Live yt-dlp source search
-- Native source-master download and controlled format selection
-- FFprobe verification, checksums, warning classification, and atomic publication
-- Ableton WAV conversion and real segmentation
-- Listening MP3 derivative
-- Background queue worker
-- FastAPI browser interface and manual candidate-review screen
-- Windows end-to-end acceptance testing
+- Live YouTube acquisition. The current build environment lacks yt-dlp and Deno,
+  and no authorized network-test URL was supplied. Do not imply this passed.
+
+## Project-use decision
+
+Do not begin the permanent archive with a partial build. Normal use begins only
+after all v0.3 first-release acceptance criteria pass on Windows. Pre-release
+media is test material only.
 
 ## Next step
 
-Build the native-master acquisition vertical slice:
+Review and merge the native-master acquisition branch. Then:
 
-1. Add a controlled subprocess runner that ignores global yt-dlp configuration.
-2. Acquire the pinned source with `bestaudio/best` into the job temporary directory.
-3. Preserve yt-dlp info JSON, thumbnail, command outcome, warnings, and tool versions.
-4. Verify the resulting master with FFprobe and SHA-256.
-5. Classify acquisition quality without overstating “best available.”
-6. Atomically publish the verified master and sidecars to the source-ID archive path.
-7. Cover the entire slice with mocked deterministic tests before running a separate
-   authorized network integration test.
+1. Finish portable Windows installation and dependency diagnostics for yt-dlp,
+   matching EJS components, Deno, FFmpeg, and FFprobe.
+2. Run one authorized live acquisition integration test and audit its master,
+   metadata, warning status, checksums, and archive structure.
+3. Build Ableton 32-bit float WAV conversion, real long-form segmentation, and
+   derivative regeneration from the verified local source master.
 
-Do not build the GUI before this pipeline slice is reliable; the CLI and future
-browser interface must call the same acquisition core.
-
-## Locked implementation decisions
-
-- Ableton Live 12 is the primary target, with the 1.8 GiB segmentation threshold
-  retained for earlier-version compatibility.
-- The default archive root is the portable project-relative `archive/` directory.
-- yt-dlp is pinned to `2026.7.4`; dependency upgrades are explicit maintenance.
-- SQLite owns application state; `archive.json`, source info JSON, and checksums
-  preserve each archive item independently.
+Do not build the GUI until the shared acquisition and derivative pipeline is
+reliable.
