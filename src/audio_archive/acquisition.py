@@ -279,10 +279,6 @@ class AcquisitionService:
     def __init__(self, config: AppConfig, runner: CommandRunner):
         self.config = config
         self.runner = runner
-        self.yt_dlp = resolve_tool(config.yt_dlp, config.tools_directory)
-        self.ffmpeg = resolve_tool(config.ffmpeg, config.tools_directory)
-        self.ffprobe = resolve_tool(config.ffprobe, config.tools_directory)
-        self.deno = resolve_tool(config.deno, config.tools_directory)
 
     def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
         request.validate()
@@ -295,20 +291,25 @@ class AcquisitionService:
                 f"Archive directory exists without a valid manifest: {item_directory}"
             )
 
+        yt_dlp = resolve_tool(self.config.yt_dlp, self.config.tools_directory)
+        ffmpeg = resolve_tool(self.config.ffmpeg, self.config.tools_directory)
+        ffprobe = resolve_tool(self.config.ffprobe, self.config.tools_directory)
+        deno = resolve_tool(self.config.deno, self.config.tools_directory)
+
         job_temp = self.config.temp_directory / str(request.job_id)
         job_temp.mkdir(parents=True, exist_ok=True)
         info_path = job_temp / "source.info.json"
         versions: dict[str, str | None] = {
-            "yt_dlp": read_tool_version(self.runner, self.yt_dlp, "--version"),
-            "ffmpeg": read_tool_version(self.runner, self.ffmpeg, "-version"),
-            "ffprobe": read_tool_version(self.runner, self.ffprobe, "-version"),
-            "deno": read_tool_version(self.runner, self.deno, "--version"),
+            "yt_dlp": read_tool_version(self.runner, yt_dlp, "--version"),
+            "ffmpeg": read_tool_version(self.runner, ffmpeg, "-version"),
+            "ffprobe": read_tool_version(self.runner, ffprobe, "-version"),
+            "deno": read_tool_version(self.runner, deno, "--version"),
         }
         deno_match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", versions["deno"] or "")
         if not deno_match or tuple(map(int, deno_match.groups())) < (2, 3, 0):
             raise ValueError("Deno 2.3.0 or newer is required for full YouTube format access")
         command = (
-            self.yt_dlp,
+            yt_dlp,
             "--ignore-config",
             "--no-playlist",
             "--continue",
@@ -317,7 +318,7 @@ class AcquisitionService:
             "--write-info-json",
             "--write-thumbnail",
             "--js-runtimes",
-            f"deno:{self.deno}",
+            f"deno:{deno}",
             "--paths",
             str(job_temp),
             "--output",
@@ -362,20 +363,20 @@ class AcquisitionService:
 
         selected = parse_selected_format(info)
         source_media = _find_single(job_temp, "source.*", excluded_suffixes=NON_MEDIA_SUFFIXES)
-        initial_probe = probe_media(self.runner, self.ffprobe, source_media, allow_video=True)
+        initial_probe = probe_media(self.runner, ffprobe, source_media, allow_video=True)
         used_combined_fallback = initial_probe.video_stream_count > 0 or not selected.audio_only
         master_media = source_media
         if used_combined_fallback:
             demuxed = job_temp / f"demuxed{_demux_extension(initial_probe)}"
             if demuxed.exists():
                 try:
-                    probe_media(self.runner, self.ffprobe, demuxed)
+                    probe_media(self.runner, ffprobe, demuxed)
                 except ValueError:
                     demuxed.unlink()
             if not demuxed.exists():
                 self.runner.run(
                     (
-                        self.ffmpeg,
+                        ffmpeg,
                         "-nostdin",
                         "-hide_banner",
                         "-loglevel",
@@ -392,7 +393,7 @@ class AcquisitionService:
                     )
                 )
             master_media = demuxed
-        verified_probe = probe_media(self.runner, self.ffprobe, master_media)
+        verified_probe = probe_media(self.runner, ffprobe, master_media)
         if selected.is_drc:
             warnings.append(
                 AcquisitionWarning("drc", "Selected format is marked as DRC", True)

@@ -34,7 +34,7 @@ The native source-master acquisition vertical slice is implemented:
 
 Validation completed:
 
-- 33 deterministic tests pass.
+- 34 deterministic tests pass.
 - A locally generated WAV passed the real FFprobe execution path.
 - Python source compiles and the archive manifest schema remains valid JSON.
 

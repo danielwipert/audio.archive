@@ -18,7 +18,10 @@ class WarningTests(unittest.TestCase):
         self.assertEqual(warnings[0].category, "other")
         self.assertFalse(warnings[0].quality_affecting)
 
+    def test_error_line_is_always_quality_affecting(self) -> None:
+        warnings = classify_warnings("", "ERROR: extractor returned incomplete metadata")
+        self.assertTrue(warnings[0].quality_affecting)
+
 
 if __name__ == "__main__":
     unittest.main()
-

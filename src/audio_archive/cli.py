@@ -7,8 +7,9 @@ from .config import load_config
 from .db import ArchiveDatabase
 from .inputs import attach_import_id, normalize_request, preview_csv
 from .models import JobState
+from .acquisition import ExistingArchiveConflict
 from .pipeline import acquire_ready_job
-from .tooling import SubprocessRunner
+from .tooling import SubprocessRunner, ToolExecutionError
 
 
 def _database() -> tuple[ArchiveDatabase, object]:
@@ -124,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.handler(args))
-    except (FileNotFoundError, KeyError, ValueError) as exc:
+    except (
+        ExistingArchiveConflict,
+        FileNotFoundError,
+        KeyError,
+        ToolExecutionError,
+        ValueError,
+    ) as exc:
         parser.error(str(exc))
     return 2

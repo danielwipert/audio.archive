@@ -39,7 +39,7 @@ def classify_warnings(stdout: str, stderr: str) -> tuple[AcquisitionWarning, ...
             continue
         seen.add(normalized)
         category = "other"
-        quality_affecting = False
+        quality_affecting = "error" in normalized.casefold()
         for candidate_category, pattern in QUALITY_PATTERNS:
             if pattern.search(normalized):
                 category = candidate_category
@@ -47,4 +47,3 @@ def classify_warnings(stdout: str, stderr: str) -> tuple[AcquisitionWarning, ...
                 break
         records.append(AcquisitionWarning(category, normalized, quality_affecting))
     return tuple(records)
-

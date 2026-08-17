@@ -186,6 +186,8 @@ class AcquisitionTests(unittest.TestCase):
             self.assertNotIn("--extract-audio", yt_dlp_command)
 
             acquisition_calls = sum("--write-info-json" in item for item in runner.commands)
+            for tool in config.tools_directory.iterdir():
+                tool.unlink()
             reused = service.acquire(request())
             self.assertTrue(reused.reused_existing)
             self.assertEqual(
