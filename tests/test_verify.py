@@ -1,6 +1,6 @@
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 
 from audio_archive.integrity import verify_sha256sums, write_sha256sums
 from audio_archive.verify import parse_ffprobe
@@ -40,7 +40,25 @@ class VerifyTests(unittest.TestCase):
             self.assertFalse(result.valid)
             self.assertIn("checksum mismatch: master/item.webm", result.errors)
 
+    def test_ffprobe_duration_timestamp_produces_exact_sample_count(self) -> None:
+        probe = parse_ffprobe(
+            {
+                "format": {"format_name": "wav", "duration": "0.5"},
+                "streams": [
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "pcm_f32le",
+                        "sample_rate": "48000",
+                        "channels": 2,
+                        "duration_ts": 24000,
+                        "time_base": "1/48000",
+                    }
+                ],
+            },
+            allow_video=False,
+        )
+        self.assertEqual(probe.audio.sample_count, 24000)
+
 
 if __name__ == "__main__":
     unittest.main()
-

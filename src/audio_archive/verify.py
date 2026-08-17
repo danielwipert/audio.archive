@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from fractions import Fraction
 from hashlib import sha256
 from pathlib import Path
-import json
 
 from .tooling import CommandRunner
 
@@ -14,6 +15,7 @@ class AudioStream:
     sample_rate_hz: int | None
     channels: int | None
     bitrate_bps: int | None
+    sample_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -33,11 +35,25 @@ def _optional_int(value: object) -> int | None:
         raise ValueError(f"Invalid integer media property: {value!r}") from exc
 
 
+def _sample_count(audio: dict[str, object], sample_rate_hz: int | None) -> int | None:
+    duration_ts = _optional_int(audio.get("duration_ts"))
+    time_base = str(audio.get("time_base") or "")
+    if duration_ts is None or sample_rate_hz is None or "/" not in time_base:
+        return None
+    try:
+        count = Fraction(time_base) * duration_ts * sample_rate_hz
+    except (ValueError, ZeroDivisionError):
+        return None
+    return int(count) if count.denominator == 1 else round(float(count))
+
+
 def parse_ffprobe(data: dict[str, object], *, allow_video: bool) -> MediaProbe:
     streams = data.get("streams")
     format_data = data.get("format")
     if not isinstance(streams, list) or not isinstance(format_data, dict):
-        raise ValueError("FFprobe response is missing streams or format data")
+        raise ValueError(  # noqa: TRY004 - malformed external data is a value error
+            "FFprobe response is missing streams or format data"
+        )
     audio_streams = [item for item in streams if item.get("codec_type") == "audio"]
     video_streams = [item for item in streams if item.get("codec_type") == "video"]
     if len(audio_streams) != 1:
@@ -55,14 +71,16 @@ def parse_ffprobe(data: dict[str, object], *, allow_video: bool) -> MediaProbe:
     codec = str(audio.get("codec_name") or "").strip()
     if not codec:
         raise ValueError("FFprobe did not report an audio codec")
+    sample_rate_hz = _optional_int(audio.get("sample_rate"))
     return MediaProbe(
         format_name=str(format_data.get("format_name") or "unknown"),
         duration_seconds=duration,
         audio=AudioStream(
             codec=codec,
-            sample_rate_hz=_optional_int(audio.get("sample_rate")),
+            sample_rate_hz=sample_rate_hz,
             channels=_optional_int(audio.get("channels")),
             bitrate_bps=_optional_int(audio.get("bit_rate")),
+            sample_count=_sample_count(audio, sample_rate_hz),
         ),
         video_stream_count=len(video_streams),
     )
@@ -83,7 +101,7 @@ def probe_media(
             "-v",
             "error",
             "-show_entries",
-            "format=format_name,duration:stream=index,codec_type,codec_name,sample_rate,channels,bit_rate",
+            "format=format_name,duration:stream=index,codec_type,codec_name,sample_rate,channels,bit_rate,duration_ts,time_base",
             "-of",
             "json",
             str(path),
@@ -94,7 +112,9 @@ def probe_media(
     except json.JSONDecodeError as exc:
         raise ValueError("FFprobe returned invalid JSON") from exc
     if not isinstance(data, dict):
-        raise ValueError("FFprobe returned an invalid response shape")
+        raise ValueError(  # noqa: TRY004 - malformed external data is a value error
+            "FFprobe returned an invalid response shape"
+        )
     return parse_ffprobe(data, allow_video=allow_video)
 
 
@@ -104,4 +124,3 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-

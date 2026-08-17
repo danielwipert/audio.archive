@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-import json
-import sqlite3
-from typing import Iterator
 
 from .models import ACTIVE_STATES, JobRequest, JobState, ensure_transition
 from .urls import parse_youtube_url
-
 
 SCHEMA_VERSION = 1
 
@@ -253,6 +252,15 @@ class ArchiveDatabase:
                 (extractor, source_id),
             ).fetchone()
 
+    def list_assets(self, archive_id: str) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    "SELECT * FROM assets WHERE archive_id = ? ORDER BY role, relative_path",
+                    (archive_id,),
+                )
+            )
+
     def record_acquisition(
         self,
         job_id: int,
@@ -352,6 +360,73 @@ class ArchiveDatabase:
                 ),
             )
 
+    def record_ableton_outputs(
+        self,
+        job_id: int,
+        *,
+        archive_id: str,
+        assets: list[dict[str, object]],
+        reused_existing: bool,
+    ) -> None:
+        if not assets:
+            raise ValueError("At least one Ableton asset is required")
+        now = utc_now()
+        with self.connect() as connection:
+            job = connection.execute("SELECT state FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if job is None:
+                raise KeyError(f"Job {job_id} does not exist")
+            if JobState(job["state"]) != JobState.CONVERTING:
+                raise ValueError(f"Job {job_id} must be converting to record Ableton outputs")
+            for asset in assets:
+                relative_path = str(asset["relative_path"])
+                sha256 = str(asset["sha256"])
+                media_properties = dict(asset["media_properties"])
+                connection.execute(
+                    """
+                    INSERT INTO assets (
+                        archive_id, role, relative_path, sha256,
+                        media_properties_json, verified_at_utc
+                    ) VALUES (?, 'ableton', ?, ?, ?, ?)
+                    ON CONFLICT(archive_id, role, relative_path) DO UPDATE SET
+                        sha256 = excluded.sha256,
+                        media_properties_json = excluded.media_properties_json,
+                        verified_at_utc = excluded.verified_at_utc
+                    """,
+                    (
+                        archive_id,
+                        relative_path,
+                        sha256,
+                        json.dumps(media_properties, sort_keys=True),
+                        now,
+                    ),
+                )
+            connection.execute(
+                "UPDATE jobs SET progress_percent = 90, updated_at_utc = ? WHERE id = ?",
+                (now, job_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message, detail_json
+                ) VALUES (?, ?, 'converting', 'converting',
+                          'ableton_outputs_recorded', ?, ?)
+                """,
+                (
+                    job_id,
+                    now,
+                    f"Recorded {len(assets)} verified Ableton output(s)",
+                    json.dumps(
+                        {
+                            "archive_id": archive_id,
+                            "paths": [str(asset["relative_path"]) for asset in assets],
+                            "reused_existing": reused_existing,
+                        },
+                        sort_keys=True,
+                    ),
+                ),
+            )
+
     def fail_job(self, job_id: int, *, stage: str, summary: str) -> None:
         with self.connect() as connection:
             row = connection.execute("SELECT state FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -407,6 +482,13 @@ class ArchiveDatabase:
                 """
                 UPDATE jobs
                 SET state = ?, updated_at_utc = ?,
+                    progress_percent = CASE
+                        WHEN ? IN (
+                            'completed', 'completed_with_warnings', 'skipped_duplicate',
+                            'not_found', 'cancelled'
+                        ) THEN 100
+                        ELSE progress_percent
+                    END,
                     started_at_utc = CASE
                         WHEN started_at_utc IS NULL AND ? IN ('resolving', 'downloading') THEN ?
                         ELSE started_at_utc
@@ -414,7 +496,15 @@ class ArchiveDatabase:
                     completed_at_utc = COALESCE(?, completed_at_utc)
                 WHERE id = ?
                 """,
-                (new_state.value, now, new_state.value, now, completed_at, job_id),
+                (
+                    new_state.value,
+                    now,
+                    new_state.value,
+                    new_state.value,
+                    now,
+                    completed_at,
+                    job_id,
+                ),
             )
             connection.execute(
                 """

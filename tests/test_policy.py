@@ -22,7 +22,16 @@ class OutputPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             estimate_pcm_bytes(duration_seconds=60, sample_rate_hz=48000, channels=6)
 
+    def test_high_rate_segments_are_shortened_to_stay_below_safe_size(self) -> None:
+        plan = plan_ableton_output(
+            duration_seconds=3600,
+            sample_rate_hz=96000,
+            channels=2,
+        )
+        self.assertTrue(plan.segmented)
+        self.assertLess(plan.segment_seconds, 3600)
+        self.assertLess(plan.segment_seconds * 96000 * 2 * 4, 1.8 * GIB)
+
 
 if __name__ == "__main__":
     unittest.main()
-

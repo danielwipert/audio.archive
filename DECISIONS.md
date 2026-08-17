@@ -73,3 +73,16 @@ project virtual environment at exact application-compatible versions. Runtime
 tool resolution prefers these project-controlled locations and does not embed a
 drive letter or user-specific path. Updates occur only through the explicit
 maintenance script.
+
+## DEC-008 — Ableton conversion and segmentation
+
+- **Status:** Accepted
+- **Date:** 2026-08-17
+
+Ableton intermediates are decoded from the verified local source master with
+FFmpeg `pcm_f32le` and no audio filters, resampling, channel remapping,
+normalization, or dither. Normal items produce one WAV. Items predicted to cross
+the configured safe size use FFmpeg's segment muxer in one continuous decode;
+each resulting WAV is FFprobe-verified and recorded with cumulative start and
+end sample positions. A real generated-audio test requires the concatenated
+segment PCM to be byte-identical to an unsegmented 32-bit float decode.

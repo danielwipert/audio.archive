@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
-
+from math import ceil, floor
 
 GIB = 1024**3
+WAV_HEADER_RESERVE = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -46,12 +46,17 @@ def plan_ableton_output(
         sample_rate_hz=sample_rate_hz,
         channels=channels,
     )
-    segment_seconds = segment_minutes * 60
-    segmented = estimated > safe_size_gib * GIB
+    safe_bytes = floor(safe_size_gib * GIB)
+    bytes_per_second = sample_rate_hz * channels * 4
+    default_segment_seconds = segment_minutes * 60
+    maximum_safe_seconds = floor((safe_bytes - WAV_HEADER_RESERVE) / bytes_per_second)
+    if maximum_safe_seconds < 1:
+        raise ValueError("safe_size_gib is too small for one second of PCM audio")
+    segment_seconds = min(default_segment_seconds, maximum_safe_seconds)
+    segmented = estimated + WAV_HEADER_RESERVE > safe_bytes
     return AbletonOutputPlan(
         estimated_bytes=estimated,
         segmented=segmented,
         segment_count=ceil(duration_seconds / segment_seconds) if segmented else 1,
         segment_seconds=segment_seconds if segmented else None,
     )
-

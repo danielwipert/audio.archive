@@ -4,13 +4,15 @@ import argparse
 import json
 from pathlib import Path
 
+from .ableton import ExistingDerivativeConflict
 from .acquisition import ExistingArchiveConflict
+from .archive_verify import verify_archive_item
 from .config import load_config
 from .db import ArchiveDatabase
 from .doctor import format_report, run_doctor
 from .inputs import attach_import_id, normalize_request, preview_csv
 from .models import JobState
-from .pipeline import acquire_ready_job
+from .pipeline import acquire_ready_job, create_ableton_for_job
 from .tooling import SubprocessRunner, ToolExecutionError
 
 
@@ -86,6 +88,48 @@ def _doctor_command(args: argparse.Namespace) -> int:
     return 0 if report.ready else 1
 
 
+def _convert_ableton_command(args: argparse.Namespace) -> int:
+    database, config = _database()
+    result = create_ableton_for_job(database, config, SubprocessRunner(), args.job_id)
+    if result.segmented:
+        print(f"Ableton segments: {result.assets[0].path.parent}")
+    else:
+        print(f"Ableton WAV: {result.assets[0].path}")
+    print(f"Reused existing output: {'yes' if result.reused_existing else 'no'}")
+    return 0
+
+
+def _verify_command(args: argparse.Namespace) -> int:
+    config = load_config()
+    if args.all:
+        items_root = config.archive_root / "items" / "youtube"
+        item_directories = (
+            sorted(path for path in items_root.iterdir() if path.is_dir())
+            if items_root.is_dir()
+            else []
+        )
+        if not item_directories:
+            print("No archive items found")
+            return 0
+    else:
+        target = Path(args.target)
+        item_directories = [
+            target.resolve()
+            if target.is_dir()
+            else config.archive_root / "items" / "youtube" / args.target
+        ]
+    valid = True
+    for item_directory in item_directories:
+        result = verify_archive_item(item_directory)
+        status = "OK" if result.valid else "FAIL"
+        identity = result.archive_id or item_directory.name
+        print(f"[{status}] {identity}: {result.checked_files} checked file(s)")
+        for error in result.errors:
+            print(f"  - {error}")
+        valid = valid and result.valid
+    return 0 if valid else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="audio-archive")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -116,6 +160,18 @@ def build_parser() -> argparse.ArgumentParser:
     acquire.add_argument("job_id", type=int)
     acquire.set_defaults(handler=_acquire_command)
 
+    convert_ableton = subparsers.add_parser(
+        "convert-ableton", help="create or reuse a verified Ableton intermediate"
+    )
+    convert_ableton.add_argument("job_id", type=int)
+    convert_ableton.set_defaults(handler=_convert_ableton_command)
+
+    verify = subparsers.add_parser("verify", help="verify archive checksums and manifest assets")
+    verify_target = verify.add_mutually_exclusive_group(required=True)
+    verify_target.add_argument("target", nargs="?", help="video ID or archive item directory")
+    verify_target.add_argument("--all", action="store_true", help="verify every YouTube item")
+    verify.set_defaults(handler=_verify_command)
+
     doctor = subparsers.add_parser("doctor", help="verify the complete local toolchain")
     doctor.add_argument("--json", action="store_true", help="emit machine-readable diagnostics")
     doctor.set_defaults(handler=_doctor_command)
@@ -140,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.handler(args))
     except (
         ExistingArchiveConflict,
+        ExistingDerivativeConflict,
         FileNotFoundError,
         KeyError,
         ToolExecutionError,
