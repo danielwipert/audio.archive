@@ -24,6 +24,8 @@ class MediaProbe:
     duration_seconds: float
     audio: AudioStream
     video_stream_count: int
+    attached_picture_count: int = 0
+    tags: dict[str, str] | None = None
 
 
 def _optional_int(value: object) -> int | None:
@@ -56,6 +58,12 @@ def parse_ffprobe(data: dict[str, object], *, allow_video: bool) -> MediaProbe:
         )
     audio_streams = [item for item in streams if item.get("codec_type") == "audio"]
     video_streams = [item for item in streams if item.get("codec_type") == "video"]
+    attached_pictures = [
+        item
+        for item in video_streams
+        if isinstance(item.get("disposition"), dict)
+        and int(item["disposition"].get("attached_pic") or 0) == 1
+    ]
     if len(audio_streams) != 1:
         raise ValueError(f"Expected exactly one audio stream; found {len(audio_streams)}")
     if video_streams and not allow_video:
@@ -72,6 +80,12 @@ def parse_ffprobe(data: dict[str, object], *, allow_video: bool) -> MediaProbe:
     if not codec:
         raise ValueError("FFprobe did not report an audio codec")
     sample_rate_hz = _optional_int(audio.get("sample_rate"))
+    raw_tags = format_data.get("tags")
+    tags = (
+        {str(key).casefold(): str(value) for key, value in raw_tags.items()}
+        if isinstance(raw_tags, dict)
+        else {}
+    )
     return MediaProbe(
         format_name=str(format_data.get("format_name") or "unknown"),
         duration_seconds=duration,
@@ -83,6 +97,8 @@ def parse_ffprobe(data: dict[str, object], *, allow_video: bool) -> MediaProbe:
             sample_count=_sample_count(audio, sample_rate_hz),
         ),
         video_stream_count=len(video_streams),
+        attached_picture_count=len(attached_pictures),
+        tags=tags,
     )
 
 
@@ -101,7 +117,7 @@ def probe_media(
             "-v",
             "error",
             "-show_entries",
-            "format=format_name,duration:stream=index,codec_type,codec_name,sample_rate,channels,bit_rate,duration_ts,time_base",
+            "format=format_name,duration:format_tags=title,artist:stream=index,codec_type,codec_name,sample_rate,channels,bit_rate,duration_ts,time_base:stream_disposition=attached_pic",
             "-of",
             "json",
             str(path),

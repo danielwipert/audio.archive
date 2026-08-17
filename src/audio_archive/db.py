@@ -427,6 +427,69 @@ class ArchiveDatabase:
                 ),
             )
 
+    def record_listening_output(
+        self,
+        job_id: int,
+        *,
+        archive_id: str,
+        relative_path: str,
+        sha256: str,
+        media_properties: dict[str, object],
+        reused_existing: bool,
+    ) -> None:
+        now = utc_now()
+        with self.connect() as connection:
+            job = connection.execute("SELECT state FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if job is None:
+                raise KeyError(f"Job {job_id} does not exist")
+            if JobState(job["state"]) != JobState.CONVERTING:
+                raise ValueError(f"Job {job_id} must be converting to record listening output")
+            connection.execute(
+                """
+                INSERT INTO assets (
+                    archive_id, role, relative_path, sha256,
+                    media_properties_json, verified_at_utc
+                ) VALUES (?, 'listening', ?, ?, ?, ?)
+                ON CONFLICT(archive_id, role, relative_path) DO UPDATE SET
+                    sha256 = excluded.sha256,
+                    media_properties_json = excluded.media_properties_json,
+                    verified_at_utc = excluded.verified_at_utc
+                """,
+                (
+                    archive_id,
+                    relative_path,
+                    sha256,
+                    json.dumps(media_properties, sort_keys=True),
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE jobs SET progress_percent = 95, updated_at_utc = ? WHERE id = ?",
+                (now, job_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message, detail_json
+                ) VALUES (?, ?, 'converting', 'converting',
+                          'listening_output_recorded', ?, ?)
+                """,
+                (
+                    job_id,
+                    now,
+                    f"Recorded verified listening output {relative_path}",
+                    json.dumps(
+                        {
+                            "archive_id": archive_id,
+                            "path": relative_path,
+                            "reused_existing": reused_existing,
+                        },
+                        sort_keys=True,
+                    ),
+                ),
+            )
+
     def fail_job(self, job_id: int, *, stage: str, summary: str) -> None:
         with self.connect() as connection:
             row = connection.execute("SELECT state FROM jobs WHERE id = ?", (job_id,)).fetchone()

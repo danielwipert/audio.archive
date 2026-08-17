@@ -86,3 +86,18 @@ the configured safe size use FFmpeg's segment muxer in one continuous decode;
 each resulting WAV is FFprobe-verified and recorded with cumulative start and
 end sample positions. A real generated-audio test requires the concatenated
 segment PCM to be byte-identical to an unsegmented 32-bit float decode.
+
+## DEC-009 — Listening derivative provenance
+
+- **Status:** Accepted
+- **Date:** 2026-08-17
+
+Listening MP3s are optional compatibility derivatives made only from the
+verified local source master. FFmpeg uses libmp3lame VBR quality scale 0, does
+not normalize or deliberately change rate or channel layout, and embeds curated
+title/artist tags plus a JPEG-encoded copy of the preserved source thumbnail.
+FFprobe must confirm one MP3 audio stream, exactly one attached picture, the
+source rate and mono/stereo layout, and the curated tags before publication.
+Encoder settings, source hash, output hash, metadata, and artwork presence are
+recorded in the durable manifest. A valid existing derivative is reused without
+network access.

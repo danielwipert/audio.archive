@@ -55,6 +55,10 @@ def make_archive_item(config: AppConfig, *, duration_seconds: float) -> tuple[Pa
     master = item / master_relative
     master.parent.mkdir(parents=True)
     master.write_bytes(b"verified native source")
+    artwork_relative = Path("artwork/source-thumbnail.jpg")
+    artwork = item / artwork_relative
+    artwork.parent.mkdir(parents=True)
+    artwork.write_bytes(b"verified source thumbnail")
     master_sha256 = sha256_file(master)
     manifest = {
         "schema_version": "1.2",
@@ -83,7 +87,10 @@ def make_archive_item(config: AppConfig, *, duration_seconds: float) -> tuple[Pa
     }
     manifest_path = item / "metadata" / "archive.json"
     write_manifest_atomic(manifest_path, manifest)
-    write_sha256sums(item, [master_relative, Path("metadata/archive.json")])
+    write_sha256sums(
+        item,
+        [master_relative, artwork_relative, Path("metadata/archive.json")],
+    )
     return item, master_sha256
 
 
