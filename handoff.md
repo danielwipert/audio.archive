@@ -14,6 +14,8 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 - PR #5 (recoverable sequential queue worker) was reviewed, corrected for safe
   Windows process liveness, and merged into `main` as commit
   `171f44d60555f11804f8c4faff223df96e05166b`.
+- PR #7 added GitHub Actions CI to `main`; Ruff, Python compilation, and the full
+  pytest suite are now the repository merge gate.
 - Added bounded metadata-only yt-dlp candidate search for pending artist/title
   jobs and connected it to the existing deterministic resolver scoring policy.
 - Persisted ranked candidates, scores, reasons, warnings, and disqualification
@@ -22,14 +24,13 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
   and not-found actions; review jobs do not block later queue work.
 - Connected pending resolution to the sequential worker so strong matches can
   continue directly into acquisition under the same worker claim.
-- Added resolver CLI controls and repository CI for Ruff, compilation, and the
-  full pytest suite.
+- Added resolver CLI controls for development and the future browser UI.
 
 ## Verification
 
 - Resolver fixtures cover automatic selection, ambiguous review, manual approval,
   replacement URL, not-found, queue claiming, and worker continuation behavior.
-- GitHub Actions CI is the merge gate for this branch and must pass before merge.
+- GitHub Actions CI on PR #6 must pass before the resolver slice is merged.
 - Windows PowerShell/Ableton acceptance and an authorized live YouTube run are
   still required before permanent archive use.
 
