@@ -59,6 +59,15 @@ function Invoke-PythonStep {
     }
 }
 
+function Failure-Step([string]$Name, [string]$Message) {
+    return [PSCustomObject]@{
+        Name = $Name
+        Passed = $false
+        ExitCode = 1
+        Output = $Message
+    }
+}
+
 function Status-Text([bool]$Passed) {
     if ($Passed) { return "PASS" }
     return "FAIL"
@@ -66,7 +75,9 @@ function Status-Text([bool]$Passed) {
 
 $Doctor = Invoke-PythonStep "Toolchain readiness" @("-m", "audio_archive", "doctor")
 $Tests = Invoke-PythonStep "Full deterministic and integration test suite" @("-m", "pytest")
-$ArchiveVerify = Invoke-PythonStep "Existing archive integrity" @("-m", "audio_archive", "verify", "--all")
+$ArchiveVerify = Invoke-PythonStep "Existing archive integrity" @(
+    "-m", "audio_archive", "verify", "--all"
+)
 $Fixtures = Invoke-PythonStep "Ableton acceptance fixture generation" @(
     "-m", "audio_archive.acceptance", "--json"
 )
@@ -93,18 +104,27 @@ if ($AuthorizedUrl) {
         "-m", "audio_archive", "add", "--url", $AuthorizedUrl, "--profile", "complete"
     )
     $LiveSteps += $Add
+
     if ($Add.Passed -and $Add.Output -match "Created job\s+(\d+)") {
         $LiveJobId = [int]$Matches[1]
         $Acquire = Invoke-PythonStep "Acquire authorized native source" @(
             "-m", "audio_archive", "acquire", "$LiveJobId"
         )
-        $Ableton = Invoke-PythonStep "Create authorized Ableton derivative" @(
-            "-m", "audio_archive", "convert-ableton", "$LiveJobId"
-        )
-        $Listening = Invoke-PythonStep "Create authorized listening derivative" @(
-            "-m", "audio_archive", "convert-listening", "$LiveJobId"
-        )
-        $LiveSteps += $Acquire, $Ableton, $Listening
+        $LiveSteps += $Acquire
+
+        if ($Acquire.Passed) {
+            $Ableton = Invoke-PythonStep "Create authorized Ableton derivative" @(
+                "-m", "audio_archive", "convert-ableton", "$LiveJobId"
+            )
+            $LiveSteps += $Ableton
+
+            if ($Ableton.Passed) {
+                $Listening = Invoke-PythonStep "Create authorized listening derivative" @(
+                    "-m", "audio_archive", "convert-listening", "$LiveJobId"
+                )
+                $LiveSteps += $Listening
+            }
+        }
 
         $Id = Invoke-PythonStep "Resolve authorized source ID" @(
             "-c",
@@ -114,11 +134,17 @@ if ($AuthorizedUrl) {
         $LiveSteps += $Id
         if ($Id.Passed) {
             $LiveVideoId = $Id.Output.Trim()
+        }
+
+        $PriorFailures = ($LiveSteps | Where-Object { -not $_.Passed }).Count
+        if ($PriorFailures -eq 0 -and $LiveVideoId) {
             $VerifyLive = Invoke-PythonStep "Verify authorized complete archive item" @(
                 "-m", "audio_archive", "verify", $LiveVideoId
             )
             $LiveSteps += $VerifyLive
         }
+    } elseif ($Add.Passed) {
+        $LiveSteps += Failure-Step "Parse created job" "The add command did not return a job ID."
     }
 
     if ($LiveSteps.Count -gt 0 -and ($LiveSteps | Where-Object { -not $_.Passed }).Count -eq 0) {
@@ -161,7 +187,7 @@ $Report = @"
 # Audio Archive — Windows v0.3 Acceptance Report
 
 **Generated:** $((Get-Date).ToUniversalTime().ToString("o"))  
-**Repository commit:** `$GitCommit`  
+**Repository commit:** $GitCommit  
 **Platform:** $([Environment]::OSVersion.VersionString)  
 **Python:** $PythonVersion  
 **Release status:** **$ReleaseStatus**
@@ -175,7 +201,7 @@ $Report = @"
 | Existing archive integrity | $(Status-Text $ArchiveVerify.Passed) |
 | Ableton fixture generation and verification | $(Status-Text $Fixtures.Passed) |
 | Automated core | **$AutomatedStatus** |
-| Authorized live `complete` ingestion | **$LiveStatus** |
+| Authorized live complete ingestion | **$LiveStatus** |
 
 ### Authorized live ingestion
 
@@ -185,20 +211,20 @@ $LiveDetail
 
 ### Normal 32-bit float WAV
 
-`$NormalPath`
+$NormalPath
 
 ### Forced-segmentation fixture
 
 The following files were created through the same production segmentation code path using an acceptance-only small safe-size threshold:
 
-````text
+~~~text
 $SegmentedPaths
-````
+~~~
 
 ## Manual acceptance — must be completed by the user
 
-- [ ] Double-click `launch.cmd`; Audio Archive opens in the default browser without requiring the user to open a terminal manually.
-- [ ] Confirm the browser address is loopback-only (`127.0.0.1` or another loopback address) and the queue is restored after restarting the app.
+- [ ] Double-click launch.cmd; Audio Archive opens in the default browser without requiring the user to open a terminal manually.
+- [ ] Confirm the browser address is loopback-only (127.0.0.1 or another loopback address) and the queue is restored after restarting the app.
 - [ ] Add an artist/title job in the browser and confirm queue/status behavior is understandable.
 - [ ] Preview a CSV containing both valid and invalid rows and confirm valid rows can still be queued.
 - [ ] Confirm an ambiguous source can be reviewed without blocking another runnable job.
@@ -211,31 +237,31 @@ $SegmentedPaths
 
 ### Doctor
 
-````text
+~~~text
 $($Doctor.Output)
-````
+~~~
 
 ### Tests
 
-````text
+~~~text
 $($Tests.Output)
-````
+~~~
 
 ### Archive verification
 
-````text
+~~~text
 $($ArchiveVerify.Output)
-````
+~~~
 
 ### Fixture generation
 
-````text
+~~~text
 $($Fixtures.Output)
-````
+~~~
 
 ## Release rule
 
-The permanent archive must not begin until automated acceptance passes, one authorized live `complete` job passes when available, and every applicable manual checkbox above has been verified on the target Windows/Ableton machine.
+The permanent archive must not begin until automated acceptance passes, one authorized live complete job passes when available, and every applicable manual checkbox above has been verified on the target Windows/Ableton machine.
 "@
 
 Set-Content -LiteralPath $ReportPath -Value $Report -Encoding UTF8
