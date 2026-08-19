@@ -93,6 +93,32 @@ External tool updates are an explicit maintenance action:
 powershell -ExecutionPolicy Bypass -File scripts\update-tools.ps1
 ```
 
+## Windows v0.3 release acceptance
+
+Before starting the permanent archive, run the automated acceptance workflow on
+the target Windows machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows-acceptance.ps1 -RunSetup
+```
+
+It runs the toolchain check, full tests, existing archive integrity verification,
+and creates persistent normal and forced-segmentation Ableton fixtures through
+the production conversion service. The report is written beneath
+`archive/acceptance/reports/`, outside version control.
+
+When an authorized YouTube item is available, add the live `complete` ingestion
+to the same acceptance run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows-acceptance.ps1 `
+  -AuthorizedUrl "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+The script does not claim Ableton or launcher checks have passed. The generated
+report leaves those as explicit manual checkboxes with the exact WAV paths to
+open. See `docs/WINDOWS_ACCEPTANCE.md` for the full release procedure.
+
 ## Development setup
 
 Python 3.11 or newer is required. On Windows PowerShell:
