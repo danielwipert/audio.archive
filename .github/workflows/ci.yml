@@ -35,5 +35,12 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q src tests
 
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            [void][scriptblock]::Create((Get-Content -Raw $_.FullName))
+          }
+
       - name: Test
         run: python -m pytest
