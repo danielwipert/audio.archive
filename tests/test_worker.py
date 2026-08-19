@@ -8,9 +8,10 @@ from unittest.mock import patch
 
 from test_ableton import URL, make_config
 
+from audio_archive.cli import _init_command
 from audio_archive.db import ArchiveDatabase
 from audio_archive.models import JobRequest, JobState
-from audio_archive.worker import SequentialWorker
+from audio_archive.worker import SequentialWorker, _claimed_process_is_alive
 
 
 class NoopRunner:
@@ -120,6 +121,33 @@ class WorkerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Another queue worker"):
             self.worker.recover_startup()
+
+        self.assertEqual(self.database.get_job(job_id)["state"], JobState.DOWNLOADING.value)
+        self.assertEqual(len(self.database.list_worker_claims()), 1)
+
+    def test_windows_liveness_probe_never_calls_os_kill(self) -> None:
+        with (
+            patch("audio_archive.worker.os.name", "nt"),
+            patch(
+                "audio_archive.worker._windows_process_is_alive", return_value=True
+            ) as windows_probe,
+            patch("audio_archive.worker.os.kill") as kill,
+        ):
+            alive = _claimed_process_is_alive("123:worker")
+
+        self.assertTrue(alive)
+        windows_probe.assert_called_once_with(123)
+        kill.assert_not_called()
+
+    def test_init_refuses_to_interrupt_a_live_worker(self) -> None:
+        job_id = self._url_job()
+        token = f"{os.getpid()}:live-worker"
+        self.assertEqual(self.database.claim_next_runnable_job(token), job_id)
+        self.database.transition_job(job_id, JobState.DOWNLOADING)
+
+        with patch("audio_archive.cli._database", return_value=(self.database, self.config)):
+            with self.assertRaisesRegex(ValueError, "Another queue worker"):
+                _init_command()
 
         self.assertEqual(self.database.get_job(job_id)["state"], JobState.DOWNLOADING.value)
         self.assertEqual(len(self.database.list_worker_claims()), 1)
