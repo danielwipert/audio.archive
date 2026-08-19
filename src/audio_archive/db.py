@@ -10,7 +10,7 @@ from pathlib import Path
 from .models import ACTIVE_STATES, JobRequest, JobState, ensure_transition
 from .urls import parse_youtube_url
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def utc_now() -> str:
@@ -142,6 +142,23 @@ class ArchiveDatabase:
                         verified_at_utc TEXT NOT NULL,
                         UNIQUE(archive_id, role, relative_path)
                     );
+
+                    CREATE TABLE worker_claims (
+                        job_id INTEGER PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                        claim_token TEXT NOT NULL UNIQUE,
+                        claimed_at_utc TEXT NOT NULL
+                    );
+                    """
+                )
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            elif current == 1:
+                connection.execute(
+                    """
+                    CREATE TABLE worker_claims (
+                        job_id INTEGER PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                        claim_token TEXT NOT NULL UNIQUE,
+                        claimed_at_utc TEXT NOT NULL
+                    )
                     """
                 )
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -244,6 +261,177 @@ class ArchiveDatabase:
                     )
                 )
             return list(connection.execute("SELECT * FROM jobs ORDER BY id"))
+
+    def list_job_events(self, job_id: int) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    "SELECT * FROM job_events WHERE job_id = ? ORDER BY id",
+                    (job_id,),
+                )
+            )
+
+    def claim_next_runnable_job(self, claim_token: str) -> int | None:
+        if not claim_token:
+            raise ValueError("Worker claim token is required")
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT 1 FROM worker_claims LIMIT 1").fetchone():
+                return None
+            job = connection.execute(
+                """
+                SELECT id, state
+                FROM jobs
+                WHERE state IN ('ready', 'converting')
+                ORDER BY id
+                LIMIT 1
+                """
+            ).fetchone()
+            if job is None:
+                return None
+            connection.execute(
+                "INSERT INTO worker_claims (job_id, claim_token, claimed_at_utc) VALUES (?, ?, ?)",
+                (job["id"], claim_token, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message, detail_json
+                ) VALUES (?, ?, ?, ?, 'worker_claimed', ?, ?)
+                """,
+                (
+                    job["id"],
+                    now,
+                    job["state"],
+                    job["state"],
+                    "Sequential worker claimed job",
+                    json.dumps({"claim_token": claim_token}, sort_keys=True),
+                ),
+            )
+            return int(job["id"])
+
+    def release_worker_claim(self, job_id: int, claim_token: str) -> bool:
+        now = utc_now()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT claim_token FROM worker_claims WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None or row["claim_token"] != claim_token:
+                return False
+            connection.execute("DELETE FROM worker_claims WHERE job_id = ?", (job_id,))
+            state = connection.execute(
+                "SELECT state FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()["state"]
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message
+                ) VALUES (?, ?, ?, ?, 'worker_released', ?)
+                """,
+                (job_id, now, state, state, "Sequential worker released job"),
+            )
+            return True
+
+    def clear_worker_claims(self) -> int:
+        with self.connect() as connection:
+            count = int(connection.execute("SELECT COUNT(*) FROM worker_claims").fetchone()[0])
+            connection.execute("DELETE FROM worker_claims")
+            return count
+
+    def list_worker_claims(self) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return list(
+                connection.execute(
+                    "SELECT job_id, claim_token, claimed_at_utc FROM worker_claims ORDER BY job_id"
+                )
+            )
+
+    def recover_interrupted_jobs(self) -> int:
+        now = utc_now()
+        with self.connect() as connection:
+            rows = list(
+                connection.execute(
+                    "SELECT id, source_extractor, source_id, source_url FROM jobs "
+                    "WHERE state = 'interrupted' ORDER BY id"
+                )
+            )
+            for row in rows:
+                target = (
+                    JobState.READY
+                    if row["source_extractor"] == "youtube"
+                    and row["source_id"]
+                    and row["source_url"]
+                    else JobState.PENDING
+                )
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET state = ?, updated_at_utc = ?, error_stage = NULL, error_summary = NULL
+                    WHERE id = ?
+                    """,
+                    (target.value, now, row["id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO job_events (
+                        job_id, occurred_at_utc, from_state, to_state,
+                        event_type, message
+                    ) VALUES (?, ?, 'interrupted', ?, 'recovery', ?)
+                    """,
+                    (
+                        row["id"],
+                        now,
+                        target.value,
+                        "Interrupted job requeued from its last durable boundary",
+                    ),
+                )
+            return len(rows)
+
+    def retry_job(self, job_id: int) -> JobState:
+        now = utc_now()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT state, source_extractor, source_id, source_url FROM jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Job {job_id} does not exist")
+            old_state = JobState(row["state"])
+            if old_state not in {JobState.FAILED, JobState.INTERRUPTED}:
+                raise ValueError(f"Job {job_id} is not failed or interrupted")
+            target = (
+                JobState.READY
+                if row["source_extractor"] == "youtube"
+                and row["source_id"]
+                and row["source_url"]
+                else JobState.PENDING
+            )
+            ensure_transition(old_state, target)
+            connection.execute(
+                """
+                UPDATE jobs
+                SET state = ?, retry_count = retry_count + 1,
+                    error_stage = NULL, error_summary = NULL,
+                    progress_percent = NULL, completed_at_utc = NULL,
+                    updated_at_utc = ?
+                WHERE id = ?
+                """,
+                (target.value, now, job_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, occurred_at_utc, from_state, to_state,
+                    event_type, message
+                ) VALUES (?, ?, ?, ?, 'retry', ?)
+                """,
+                (job_id, now, old_state.value, target.value, "Job queued for retry"),
+            )
+            return target
 
     def find_archive_item(self, extractor: str, source_id: str) -> sqlite3.Row | None:
         with self.connect() as connection:

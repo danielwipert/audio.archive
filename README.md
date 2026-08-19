@@ -33,9 +33,16 @@ artist tags plus the preserved source thumbnail, verifies all streams and tags
 with FFprobe, and records the encoder settings and checksums transactionally.
 Existing valid listening derivatives are reused without contacting YouTube.
 
+The sequential background worker claims one runnable job in SQLite, executes
+acquisition and every requested derivative through the shared pipeline, then
+releases the claim. A failed job is recorded without blocking later work. On a
+safe restart, stale claims are cleared, active jobs become interrupted, and
+they are requeued from the last durable boundary; a live worker is never
+interrupted by a second launcher.
+
 Audio Archive is not yet ready for normal archive use. Resolver search, the
-background worker, the browser interface, Windows/Ableton acceptance, and live
-authorized end-to-end tests remain incomplete.
+browser interface, Windows/Ableton acceptance, and live authorized end-to-end
+tests remain incomplete.
 
 ## Windows setup
 
@@ -103,6 +110,17 @@ audio-archive convert-listening 1
 The `ableton` and `listen` profiles complete after their requested output is
 verified. The `complete` profile completes only after both outputs exist and
 pass verification, regardless of which conversion command runs first.
+
+Recover unfinished work and process every runnable exact-URL job sequentially:
+
+```powershell
+audio-archive run-queue
+```
+
+Use `run-queue --once` to process at most one job. Failed or interrupted work
+can be explicitly requeued with `audio-archive retry JOB_ID`; waiting work can
+be cancelled with `audio-archive cancel JOB_ID`. Search-based pending jobs stay
+queued until resolver search and manual review are connected.
 
 Verify one item by YouTube ID, or verify the complete archive:
 
