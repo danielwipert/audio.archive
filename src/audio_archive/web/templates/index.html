@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audio Archive</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body data-poll-interval="{{ poll_interval_ms }}">
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">LOCAL PRESERVATION WORKFLOW</p>
+        <h1>Audio Archive</h1>
+        <p class="lede">Find the intended YouTube source, preserve its best accessible native audio, and create verified working files.</p>
+      </div>
+      <div id="queue-indicator" class="status-pill">Queue idle</div>
+    </header>
+
+    <section class="panel add-panel" aria-labelledby="add-title">
+      <div class="section-heading">
+        <div>
+          <p class="step">01</p>
+          <h2 id="add-title">Add audio</h2>
+        </div>
+        <p>Artist and title for search, or paste an exact YouTube URL to bypass resolution.</p>
+      </div>
+      <form id="add-form" class="form-grid">
+        <label>
+          <span>Artist</span>
+          <input name="artist" autocomplete="off" placeholder="Massive Attack">
+        </label>
+        <label>
+          <span>Song title</span>
+          <input name="title" autocomplete="off" placeholder="Teardrop">
+        </label>
+        <label>
+          <span>Version <small>optional</small></span>
+          <input name="version" autocomplete="off" placeholder="album, live, remix…">
+        </label>
+        <label class="url-field">
+          <span>Exact YouTube URL <small>optional</small></span>
+          <input name="url" type="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=…">
+        </label>
+        <label>
+          <span>Output</span>
+          <select name="profile">
+            <option value="ableton" selected>Ableton — source + 32-bit float WAV</option>
+            <option value="archive">Archive — source only</option>
+            <option value="listen">Listen — source + MP3</option>
+            <option value="complete">Complete — all outputs</option>
+          </select>
+        </label>
+        <div class="form-action">
+          <button type="submit" class="primary">Find and Rip</button>
+          <p id="add-message" class="form-message" role="status"></p>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="csv-title">
+      <div class="section-heading">
+        <div>
+          <p class="step">02</p>
+          <h2 id="csv-title">Import CSV</h2>
+        </div>
+        <p>Preview the batch first. Invalid rows are isolated; valid rows can still enter the queue.</p>
+      </div>
+      <form id="csv-form" class="csv-drop">
+        <input id="csv-file" name="file" type="file" accept=".csv,text/csv" required>
+        <div>
+          <strong>Choose a CSV batch</strong>
+          <span>Required: artist + title, unless a URL is supplied.</span>
+        </div>
+        <button type="submit" class="secondary">Preview CSV</button>
+      </form>
+      <div id="csv-preview" class="csv-preview" hidden></div>
+    </section>
+
+    <section class="panel" aria-labelledby="queue-title">
+      <div class="section-heading queue-heading">
+        <div>
+          <p class="step">03</p>
+          <h2 id="queue-title">Queue</h2>
+        </div>
+        <div class="queue-controls">
+          <button id="queue-start" class="secondary" type="button">Start</button>
+          <button id="queue-pause" class="ghost" type="button">Pause after current</button>
+          <button id="queue-resume" class="ghost" type="button">Resume</button>
+        </div>
+      </div>
+      <div id="queue-empty" class="empty-state">No jobs yet.</div>
+      <div id="queue-list" class="job-list" aria-live="polite"></div>
+    </section>
+
+    <section class="panel review-panel" aria-labelledby="review-title">
+      <div class="section-heading">
+        <div>
+          <p class="step">04</p>
+          <h2 id="review-title">Needs review</h2>
+        </div>
+        <p>The resolver only stops here when the source is ambiguous. Review does not block other queue jobs.</p>
+      </div>
+      <div id="review-empty" class="empty-state">Nothing needs review.</div>
+      <div id="review-list" class="review-list" aria-live="polite"></div>
+    </section>
+
+    <footer>
+      <span>Audio Archive runs locally on this computer.</span>
+      <span>Use only media you own or are authorized to archive.</span>
+    </footer>
+  </main>
+</body>
+</html>

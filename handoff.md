@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-08-19  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `agent/source-resolver`
+**Working branch:** `agent/browser-ui`
 
 ## Session protocol
 
@@ -11,26 +11,27 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 ## Completed
 
-- PR #5 (recoverable sequential queue worker) was reviewed, corrected for safe
-  Windows process liveness, and merged into `main` as commit
-  `171f44d60555f11804f8c4faff223df96e05166b`.
-- PR #7 added GitHub Actions CI to `main`; Ruff, Python compilation, and the full
-  pytest suite are now the repository merge gate.
-- Added bounded metadata-only yt-dlp candidate search for pending artist/title
-  jobs and connected it to the existing deterministic resolver scoring policy.
-- Persisted ranked candidates, scores, reasons, warnings, and disqualification
-  evidence before automatic selection or review.
-- Added automatic source pinning plus manual candidate approval, replacement URL,
-  and not-found actions; review jobs do not block later queue work.
-- Connected pending resolution to the sequential worker so strong matches can
-  continue directly into acquisition under the same worker claim.
-- Added resolver CLI controls for development and the future browser UI.
+- PR #5 (recoverable sequential queue worker) is merged into `main`.
+- PR #6 (YouTube candidate resolution and manual review) passed CI and was
+  squash-merged into `main` as commit `17a84d4ad656eb9fae765069103615362a270a19`.
+- PR #8 made CI runner-local and deterministic; Ruff baseline, compilation, and
+  pytest now run without network package mutation.
+- Built the single-screen FastAPI browser application using the shared SQLite
+  queue, resolver, acquisition, derivative, retry, cancel, and review paths.
+- Added artist/title and exact-URL submission, CSV preview/import, live queue
+  polling, pause/resume controls, candidate review, replacement URL, not-found,
+  completed-item folder access, and Ableton path copy.
+- Added a daemon queue controller so yt-dlp/FFmpeg work stays off HTTP request
+  handling while preserving sequential-worker claims and explicit queue pause.
+- Added `audio-archive serve` with a hard loopback-only host guard and automatic
+  browser opening; `launch.cmd` now runs readiness diagnostics then the app.
+- Added HTTP and queue-control tests for manual input, exact URLs, CSV provenance,
+  review actions, single-use preview tokens, pause/resume, and loopback safety.
 
 ## Verification
 
-- Resolver fixtures cover automatic selection, ambiguous review, manual approval,
-  replacement URL, not-found, queue claiming, and worker continuation behavior.
-- GitHub Actions CI on PR #6 must pass before the resolver slice is merged.
+- Browser UI CI is the merge gate for this branch and must pass before merge.
+- Source/imported metadata is inserted into the DOM as text, not executable HTML.
 - Windows PowerShell/Ableton acceptance and an authorized live YouTube run are
   still required before permanent archive use.
 
@@ -41,10 +42,9 @@ Windows. Pre-release media remains test material only.
 
 ## Exact next step
 
-1. Review CI and merge the source-resolver PR if clean.
-2. Build the single-screen local FastAPI browser interface on the shared queue,
-   including add-audio, CSV preview/import, queue status, and candidate review.
-3. Add the Windows launcher behavior that starts the loopback server and opens
-   the default browser while preserving worker recovery semantics.
-4. Run Windows setup and Ableton acceptance, then one authorized live YouTube
-   `complete` job and audit the finished archive item.
+1. Run CI on the browser UI PR and correct any failures before merge.
+2. Review and merge the browser UI slice into `main` when clean.
+3. Run the full Windows setup/launcher acceptance and open normal and segmented
+   generated WAVs in the supported Ableton target.
+4. Run one authorized live YouTube `complete` job, verify the full archive item,
+   and close any remaining v0.3 acceptance gaps before normal archive use.

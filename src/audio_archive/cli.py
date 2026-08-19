@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 from pathlib import Path
+import threading
+import webbrowser
 
 from .ableton import ExistingDerivativeConflict
 from .acquisition import ExistingArchiveConflict
@@ -236,12 +239,44 @@ def _verify_command(args: argparse.Namespace) -> int:
     return 0 if valid else 1
 
 
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().casefold()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _serve_command(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from .app import create_app
+
+    config = load_config()
+    if not _is_loopback_host(config.host):
+        raise ValueError(f"Refusing to expose Audio Archive on non-loopback host {config.host!r}")
+    url = f"http://{config.host}:{config.port}/"
+    if config.open_browser and not args.no_browser:
+        opener = threading.Timer(0.7, webbrowser.open, args=(url,))
+        opener.daemon = True
+        opener.start()
+    print(f"Audio Archive: {url}")
+    uvicorn.run(create_app(config), host=config.host, port=config.port, log_level="info")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="audio-archive")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     initialize = subparsers.add_parser("init", help="initialize archive directories and database")
     initialize.set_defaults(handler=lambda _: _init_command())
+
+    serve = subparsers.add_parser("serve", help="start the loopback-only local browser application")
+    serve.add_argument("--no-browser", action="store_true", help="do not open the default browser")
+    serve.set_defaults(handler=_serve_command)
 
     add = subparsers.add_parser("add", help="create one persistent ingestion job")
     add.add_argument("--artist")

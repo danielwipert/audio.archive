@@ -9,14 +9,18 @@ if not exist ".venv\Scripts\python.exe" (
   exit /b 1
 )
 
-".venv\Scripts\python.exe" -m audio_archive init
+".venv\Scripts\python.exe" -m audio_archive doctor
 if errorlevel 1 (
-  echo Audio Archive could not initialize.
+  echo.
+  echo Audio Archive is not ready. Review the diagnostics above.
   pause
   exit /b 1
 )
 
-rem The local browser server will replace this CLI handoff in the GUI build slice.
-".venv\Scripts\python.exe" -m audio_archive list
-pause
-
+".venv\Scripts\python.exe" -m audio_archive serve
+if errorlevel 1 (
+  echo.
+  echo Audio Archive stopped with an error.
+  pause
+  exit /b 1
+)

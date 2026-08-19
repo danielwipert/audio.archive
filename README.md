@@ -5,15 +5,18 @@ audio from YouTube. It preserves the best accessible native audio stream without
 transcoding, then creates verified derivatives such as a 32-bit float WAV for
 Ableton Live.
 
-The repository is in active development. The current foundation includes:
+The current application includes:
 
-- portable TOML configuration;
-- a persistent SQLite job queue and audited state transitions;
-- exact YouTube URL validation;
-- CSV validation, provenance, and within-import deduplication;
-- bounded yt-dlp candidate search plus deterministic scoring and review;
-- output-size and long-form segmentation planning; and
-- a command-line interface shared by the future browser UI.
+- portable TOML configuration and a loopback-only local server;
+- a persistent SQLite queue with audited state transitions and crash recovery;
+- exact YouTube URL ingestion;
+- CSV preview, validation, provenance, and within-import deduplication;
+- bounded yt-dlp candidate search plus deterministic scoring and manual review;
+- native source-master acquisition and FFprobe verification;
+- Ableton 32-bit float WAV creation with long-form segmentation;
+- optional listening MP3 generation from the verified local source master;
+- SHA-256 manifests and archive verification; and
+- a single-screen browser interface over the shared queue and pipeline.
 
 Artist/title jobs use metadata-only yt-dlp search with the configured candidate
 limit. Ranked candidates, scores, reasons, warnings, and disqualification flags
@@ -22,41 +25,42 @@ automatically under the configured score and margin policy. Ambiguous matches
 enter `needs_review`, where a recorded candidate can be approved, a replacement
 YouTube URL can be supplied, or the request can be marked `not_found`.
 
-The native-master acquisition slice is also implemented and deterministic-test
-verified. It uses a controlled yt-dlp command, requires Deno for full YouTube
-format access, preserves the source info record and thumbnail, verifies media
-with FFprobe, demuxes combined fallbacks with codec copy, writes SHA-256
-integrity records, and atomically publishes a complete archive item.
+The native-master acquisition pipeline uses a controlled yt-dlp command, requires
+Deno for full YouTube format access, preserves the source info record and
+thumbnail, verifies media with FFprobe, demuxes combined fallbacks with codec
+copy, writes SHA-256 integrity records, and atomically publishes a complete
+archive item.
 
-The Ableton derivative slice decodes only from that verified local master. It
-creates 32-bit float PCM WAV without normalization, resampling, channel remixing,
-filters, or dither; preserves the source rate and mono/stereo layout; segments
-long-form audio beneath the configured safe size; records exact contiguous sample
-boundaries; and updates the manifest and checksums transactionally.
+Ableton intermediates decode only from the verified local master. They use
+32-bit float PCM WAV without normalization, resampling, channel remixing,
+filters, or dither; preserve the source rate and mono/stereo layout; segment
+long-form audio beneath the configured safe size; record exact contiguous sample
+boundaries; and update manifests and checksums transactionally.
 
-The listening derivative slice also reads only the verified local master. It
-encodes a highest-quality VBR MP3 with libmp3lame, embeds curated title and
-artist tags plus the preserved source thumbnail, verifies all streams and tags
-with FFprobe, and records the encoder settings and checksums transactionally.
-Existing valid listening derivatives are reused without contacting YouTube.
+Listening MP3s also read only the verified local master. They use libmp3lame VBR
+quality scale 0, embed curated title and artist tags plus the preserved source
+thumbnail, and receive FFprobe verification before transactional publication.
+Existing valid derivatives are reused without contacting YouTube.
 
-The sequential background worker claims one runnable job in SQLite and handles
-resolution, acquisition, and every requested derivative through the shared
-pipeline. An automatically resolved artist/title job can continue directly into
-acquisition under the same claim. A review job releases the claim, and a failed
-job is recorded, so neither case blocks later queue work. On a safe restart,
-stale claims are cleared, active jobs become interrupted, and they are requeued
-from the last durable boundary; a live worker is never interrupted by a second
-launcher.
+The sequential background worker handles resolution, acquisition, and requested
+derivatives through the same persistent job model used by the browser and CLI.
+Automatic matches can continue directly into acquisition. Review jobs release
+the worker so later work continues. Startup recovery requeues interrupted jobs
+from the last durable boundary while refusing to disturb a live worker.
 
-Audio Archive is not yet ready for normal archive use. The browser interface,
-Windows/Ableton acceptance, and live authorized end-to-end tests remain
-incomplete.
+The browser interface uses server-rendered HTML, one CSS file, and minimal
+JavaScript. It supports manual artist/title or exact-URL jobs, CSV preview and
+import, live queue status, pause/resume, retry/cancel, candidate review,
+replacement URLs, not-found decisions, completed-item folders, and Ableton path
+handoff. Source and imported text are rendered as text rather than HTML.
+
+Audio Archive is still pre-release. Windows/Ableton acceptance and one authorized
+live end-to-end YouTube acquisition must pass before the permanent archive begins.
 
 ## Windows setup
 
-Python 3.11 or newer and Windows Package Manager (`winget`) are required. Run
-the one-time setup from PowerShell:
+Python 3.11 or newer and Windows Package Manager (`winget`) are required. Run the
+one-time setup from PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
@@ -66,6 +70,16 @@ Setup creates the project virtual environment, installs the pinned yt-dlp and
 matching EJS components, locates or installs Deno, FFmpeg, and FFprobe, copies
 the external executables into `tools/`, initializes the archive, and runs the
 complete readiness check. It does not update tools during ordinary ingestion.
+
+After setup, normal use is intended to start with a double-click on:
+
+```text
+launch.cmd
+```
+
+The launcher runs the readiness check, starts Audio Archive on the configured
+loopback host, and opens the local application in the default browser. The
+`serve` command refuses non-loopback hosts.
 
 You can repeat the non-mutating readiness check at any time:
 
@@ -90,11 +104,12 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-Initialize the local database and inspect the CLI:
+Initialize the local database, inspect the CLI, or launch the browser application:
 
 ```powershell
 audio-archive init
 audio-archive --help
+audio-archive serve
 ```
 
 A pending artist/title job can be resolved directly during development:
@@ -113,30 +128,19 @@ audio-archive replace-source 1 https://www.youtube.com/watch?v=VIDEO_ID
 audio-archive not-found 1
 ```
 
-The development-only acquisition command accepts the ID of a `ready` job:
+The development-only acquisition and derivative commands remain available:
 
 ```powershell
 audio-archive acquire 1
-```
-
-For an `ableton` or `complete` profile, create or reuse the verified Ableton
-intermediate after acquisition:
-
-```powershell
 audio-archive convert-ableton 1
-```
-
-For a `listen` or `complete` profile, create or reuse the verified listening MP3:
-
-```powershell
 audio-archive convert-listening 1
 ```
 
 The `ableton` and `listen` profiles complete after their requested output is
 verified. The `complete` profile completes only after both outputs exist and
-pass verification, regardless of which conversion command runs first.
+pass verification, regardless of conversion order.
 
-Recover unfinished work and process every runnable job sequentially:
+Recover unfinished work and process every runnable job sequentially from the CLI:
 
 ```powershell
 audio-archive run-queue
