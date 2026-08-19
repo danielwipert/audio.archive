@@ -46,6 +46,12 @@ class QueueController:
         if not self._thread.is_alive():
             self._thread.start()
 
+    def wake(self) -> None:
+        """Wake queued work without overriding an explicit pause."""
+
+        if not self.worker.paused:
+            self._wake.set()
+
     def start(self) -> None:
         self.worker.resume()
         self._wake.set()
@@ -54,8 +60,7 @@ class QueueController:
         self.worker.request_pause()
 
     def resume(self) -> None:
-        self.worker.resume()
-        self._wake.set()
+        self.start()
 
     def shutdown(self) -> None:
         self._stop.set()
@@ -295,7 +300,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if start_queue:
-            controller.start()
+            controller.wake()
         return {"job_id": job_id, "state": database.get_job(job_id)["state"]}
 
     @app.post("/api/csv/preview")
@@ -334,7 +339,7 @@ def create_app(
             approve_candidate(database, job_id, video_id)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        controller.start()
+        controller.wake()
         return {"job_id": job_id, "state": database.get_job(job_id)["state"]}
 
     @app.post("/api/jobs/{job_id}/replace-source")
@@ -343,7 +348,7 @@ def create_app(
             replace_source_url(database, job_id, url)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        controller.start()
+        controller.wake()
         return {"job_id": job_id, "state": database.get_job(job_id)["state"]}
 
     @app.post("/api/jobs/{job_id}/not-found")
@@ -360,7 +365,7 @@ def create_app(
             state = database.retry_job(job_id)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        controller.start()
+        controller.wake()
         return {"job_id": job_id, "state": state.value}
 
     @app.post("/api/jobs/{job_id}/cancel")
@@ -373,13 +378,18 @@ def create_app(
 
     @app.post("/api/jobs/{job_id}/open-folder")
     async def open_folder(job_id: int):
-        job = database.get_job(job_id)
+        try:
+            job = database.get_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         if not job["source_extractor"] or not job["source_id"]:
             raise HTTPException(status_code=400, detail="Job has no archived source")
         item = database.find_archive_item(str(job["source_extractor"]), str(job["source_id"]))
         if item is None:
             raise HTTPException(status_code=404, detail="Archive item is not recorded")
         path = Path(item["item_directory"])
+        if not path.is_dir():
+            raise HTTPException(status_code=404, detail="Archive item folder is missing")
         if os.name != "nt":
             return {"path": str(path), "opened": False}
         os.startfile(str(path))  # type: ignore[attr-defined]
