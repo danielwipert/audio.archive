@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from audio_archive.app import QueueController
 from audio_archive.cli import _is_loopback_host
@@ -24,7 +25,7 @@ class FakeWorker:
     def recover_startup(self) -> None:
         return None
 
-    def run_until_idle(self) -> tuple[()]:
+    def run_until_idle(self) -> tuple[object, ...]:
         self.run_calls += 1
         return ()
 
@@ -56,6 +57,16 @@ class BrowserControlTests(unittest.TestCase):
         controller.start()
 
         self.assertFalse(worker.paused)
+        self.assertTrue(controller._wake.is_set())
+
+    def test_launch_wakes_recovered_runnable_work(self) -> None:
+        worker = FakeWorker()
+        controller = QueueController(worker)  # type: ignore[arg-type]
+
+        with patch.object(controller._thread, "start") as start_thread:
+            controller.launch()
+
+        start_thread.assert_called_once_with()
         self.assertTrue(controller._wake.is_set())
 
 
