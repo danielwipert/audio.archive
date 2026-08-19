@@ -45,6 +45,7 @@ class QueueController:
     def launch(self) -> None:
         if not self._thread.is_alive():
             self._thread.start()
+        self.wake()
 
     def wake(self) -> None:
         """Wake queued work without overriding an explicit pause."""
