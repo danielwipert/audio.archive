@@ -248,14 +248,12 @@ def _init_command() -> int:
     database, config = _database()
     config.temp_directory.mkdir(parents=True, exist_ok=True)
     (config.archive_root / "items" / "youtube").mkdir(parents=True, exist_ok=True)
-    interrupted = database.interrupt_active_jobs()
-    stale_claims = database.clear_worker_claims()
-    requeued = database.recover_interrupted_jobs()
+    recovery = SequentialWorker(database, config, SubprocessRunner()).recover_startup()
     print(f"Archive initialized at {config.archive_root}")
-    if interrupted or stale_claims:
+    if recovery.interrupted_jobs or recovery.stale_claims:
         print(
-            f"Recovered {requeued} interrupted job(s) and cleared "
-            f"{stale_claims} stale worker claim(s)"
+            f"Recovered {recovery.requeued_jobs} interrupted job(s) and cleared "
+            f"{recovery.stale_claims} stale worker claim(s)"
         )
     return 0
 
