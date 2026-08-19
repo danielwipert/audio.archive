@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ctypes
 import os
+from ctypes import wintypes
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -9,6 +11,11 @@ from .db import ArchiveDatabase
 from .models import TERMINAL_STATES, JobState
 from .pipeline import acquire_ready_job, create_ableton_for_job, create_listening_for_job
 from .tooling import CommandRunner
+
+
+_ERROR_ACCESS_DENIED = 5
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,32 @@ class WorkerAlreadyRunning(ValueError):
     pass
 
 
+def _windows_process_is_alive(process_id: int) -> bool:
+    """Check a Windows PID without signaling or terminating the process."""
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    open_process.restype = wintypes.HANDLE
+    get_exit_code_process = kernel32.GetExitCodeProcess
+    get_exit_code_process.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    get_exit_code_process.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = open_process(_PROCESS_QUERY_LIMITED_INFORMATION, False, process_id)
+    if not handle:
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+    try:
+        exit_code = wintypes.DWORD()
+        if not get_exit_code_process(handle, ctypes.byref(exit_code)):
+            return True
+        return exit_code.value == _STILL_ACTIVE
+    finally:
+        close_handle(handle)
+
+
 def _claimed_process_is_alive(claim_token: str) -> bool:
     raw_pid, separator, _ = claim_token.partition(":")
     if not separator:
@@ -37,6 +70,8 @@ def _claimed_process_is_alive(claim_token: str) -> bool:
         process_id = int(raw_pid)
     except ValueError:
         return False
+    if os.name == "nt":
+        return _windows_process_is_alive(process_id)
     try:
         os.kill(process_id, 0)
     except ProcessLookupError:
