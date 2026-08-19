@@ -106,10 +106,10 @@ class BrowserAppTests(unittest.TestCase):
     def test_csv_preview_and_import_preserve_valid_rows_and_provenance(self) -> None:
         csv_bytes = (
             "artist,title,version,url,profile\n"
-            "Massive Attack,Teardrop,,,,\n"
-            "Portishead,Roads,,,,archive\n"
+            "Massive Attack,Teardrop,,,\n"
+            "Portishead,Roads,,,archive\n"
             "Bad row,,,,\n"
-            "Massive Attack,Teardrop,,,,\n"
+            "Massive Attack,Teardrop,,,\n"
         ).encode("utf-8")
 
         preview_response = self.client.post(
