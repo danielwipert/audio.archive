@@ -152,20 +152,49 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.database.get_job(job_id)["state"], JobState.DOWNLOADING.value)
         self.assertEqual(len(self.database.list_worker_claims()), 1)
 
-    def test_pending_resolution_job_does_not_block_ready_job(self) -> None:
+    def test_pending_review_job_does_not_block_ready_job(self) -> None:
         pending = self.database.create_job(JobRequest(artist="Portishead", title="Roads"))
         ready = self._url_job()
 
-        with patch(
-            "audio_archive.worker.acquire_ready_job",
-            side_effect=lambda database, config, runner, job_id: self._complete_fake_acquisition(
-                job_id
+        def resolve(database, config, runner, job_id):
+            database.transition_job(job_id, JobState.RESOLVING)
+            database.transition_job(job_id, JobState.NEEDS_REVIEW)
+
+        with (
+            patch("audio_archive.worker.resolve_pending_job", side_effect=resolve),
+            patch(
+                "audio_archive.worker.acquire_ready_job",
+                side_effect=lambda database, config, runner, job_id: (
+                    self._complete_fake_acquisition(job_id)
+                ),
+            ),
+        ):
+            results = self.worker.run_until_idle()
+
+        self.assertEqual([result.job_id for result in results], [pending, ready])
+        self.assertEqual(self.database.get_job(pending)["state"], JobState.NEEDS_REVIEW.value)
+        self.assertEqual(self.database.get_job(ready)["state"], JobState.COMPLETED.value)
+
+    def test_automatic_resolution_continues_into_acquisition(self) -> None:
+        pending = self.database.create_job(JobRequest(artist="Massive Attack", title="Teardrop"))
+
+        def resolve(database, config, runner, job_id):
+            database.transition_job(job_id, JobState.RESOLVING)
+            database.transition_job(job_id, JobState.READY)
+
+        with (
+            patch("audio_archive.worker.resolve_pending_job", side_effect=resolve),
+            patch(
+                "audio_archive.worker.acquire_ready_job",
+                side_effect=lambda database, config, runner, job_id: (
+                    self._complete_fake_acquisition(job_id)
+                ),
             ),
         ):
             result = self.worker.run_next()
 
-        self.assertEqual(result.job_id, ready)
-        self.assertEqual(self.database.get_job(pending)["state"], JobState.PENDING.value)
+        self.assertEqual(result.job_id, pending)
+        self.assertEqual(result.state, JobState.COMPLETED)
 
 
 if __name__ == "__main__":
