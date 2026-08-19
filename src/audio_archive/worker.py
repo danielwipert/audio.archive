@@ -10,6 +10,7 @@ from .config import AppConfig
 from .db import ArchiveDatabase
 from .models import TERMINAL_STATES, JobState
 from .pipeline import acquire_ready_job, create_ableton_for_job, create_listening_for_job
+from .source_resolution import claim_next_queue_job, resolve_pending_job
 from .tooling import CommandRunner
 
 
@@ -126,7 +127,7 @@ class SequentialWorker:
         if self._pause_requested:
             return None
         claim_token = f"{os.getpid()}:{uuid4().hex}"
-        job_id = self.database.claim_next_runnable_job(claim_token)
+        job_id = claim_next_queue_job(self.database, claim_token)
         if job_id is None:
             return None
         error: str | None = None
@@ -157,6 +158,10 @@ class SequentialWorker:
     def _execute_job(self, job_id: int) -> None:
         job = self.database.get_job(job_id)
         state = JobState(job["state"])
+        if state == JobState.PENDING:
+            resolve_pending_job(self.database, self.config, self.runner, job_id)
+            job = self.database.get_job(job_id)
+            state = JobState(job["state"])
         if state == JobState.READY:
             acquire_ready_job(self.database, self.config, self.runner, job_id)
             job = self.database.get_job(job_id)

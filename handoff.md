@@ -1,8 +1,8 @@
 # Audio Archive — Session Handoff
 
-**Last updated:** 2026-08-17  
+**Last updated:** 2026-08-19  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `agent/sequential-worker`
+**Working branch:** `agent/source-resolver`
 
 ## Session protocol
 
@@ -11,23 +11,26 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 ## Completed
 
-- PR #4 (verified listening MP3 derivatives) was reviewed and squash-merged
-  into `main` as commit `5d74d2d06da7f8242fab053617287d58ca5d0bd9`.
-- Added the single sequential worker required by v0.3. It claims one runnable
-  SQLite job and runs acquisition plus all requested derivatives automatically.
-- Added exclusive process-aware claims so a second launcher cannot interrupt a
-  live worker; stale crash claims are cleared during safe startup recovery.
-- Added interrupted-job recovery from durable boundaries, output reuse, queue
-  continuation after recorded failures, pause-after-current/resume primitives,
-  retry counters, cancellation, and schema 1-to-2 migration.
-- Added `run-queue`, `run-queue --once`, `retry JOB_ID`, and `cancel JOB_ID`.
+- PR #5 (recoverable sequential queue worker) was reviewed, corrected for safe
+  Windows process liveness, and merged into `main` as commit
+  `171f44d60555f11804f8c4faff223df96e05166b`.
+- PR #7 added GitHub Actions CI to `main`; Ruff, Python compilation, and the full
+  pytest suite are now the repository merge gate.
+- Added bounded metadata-only yt-dlp candidate search for pending artist/title
+  jobs and connected it to the existing deterministic resolver scoring policy.
+- Persisted ranked candidates, scores, reasons, warnings, and disqualification
+  evidence before automatic selection or review.
+- Added automatic source pinning plus manual candidate approval, replacement URL,
+  and not-found actions; review jobs do not block later queue work.
+- Connected pending resolution to the sequential worker so strong matches can
+  continue directly into acquisition under the same worker claim.
+- Added resolver CLI controls for development and the future browser UI.
 
 ## Verification
 
-- 59 tests pass; every changed Python file passes Ruff and compilation checks.
-- Tests cover exclusive claims, live-worker protection, stale-claim recovery,
-  interrupted requeue, retry history, pause/resume, failure isolation, pending
-  review bypass, sequential ordering, complete-profile stages, and DB migration.
+- Resolver fixtures cover automatic selection, ambiguous review, manual approval,
+  replacement URL, not-found, queue claiming, and worker continuation behavior.
+- GitHub Actions CI on PR #6 must pass before the resolver slice is merged.
 - Windows PowerShell/Ableton acceptance and an authorized live YouTube run are
   still required before permanent archive use.
 
@@ -38,9 +41,10 @@ Windows. Pre-release media remains test material only.
 
 ## Exact next step
 
-1. Review and merge the sequential worker PR.
-2. Implement yt-dlp candidate search, deterministic resolution persistence, and
-   manual candidate approval/replacement/not-found actions.
-3. Build the single-screen local FastAPI browser interface on the shared queue.
+1. Review CI and merge the source-resolver PR if clean.
+2. Build the single-screen local FastAPI browser interface on the shared queue,
+   including add-audio, CSV preview/import, queue status, and candidate review.
+3. Add the Windows launcher behavior that starts the loopback server and opens
+   the default browser while preserving worker recovery semantics.
 4. Run Windows setup and Ableton acceptance, then one authorized live YouTube
    `complete` job and audit the finished archive item.

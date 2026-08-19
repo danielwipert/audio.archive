@@ -13,6 +13,13 @@ from .doctor import format_report, run_doctor
 from .inputs import attach_import_id, normalize_request, preview_csv
 from .models import JobState
 from .pipeline import acquire_ready_job, create_ableton_for_job, create_listening_for_job
+from .source_resolution import (
+    approve_candidate,
+    list_resolution_candidates,
+    mark_not_found,
+    replace_source_url,
+    resolve_pending_job,
+)
 from .tooling import SubprocessRunner, ToolExecutionError
 from .worker import SequentialWorker
 
@@ -71,6 +78,59 @@ def _list_command(args: argparse.Namespace) -> int:
             part for part in (job["requested_artist"], job["requested_title"]) if part
         ) or job["requested_url"]
         print(f"{job['id']:>4}  {job['state']:<24} {job['profile']:<9} {request}")
+    return 0
+
+
+def _resolve_command(args: argparse.Namespace) -> int:
+    database, config = _database()
+    result = resolve_pending_job(database, config, SubprocessRunner(), args.job_id)
+    print(
+        f"Job {args.job_id}: {result.state.value} "
+        f"({len(result.decision.ranked)} candidate(s), {result.decision.method})"
+    )
+    if result.decision.selected:
+        selected = result.decision.selected
+        print(
+            f"Selected {selected.candidate.video_id}: {selected.candidate.title} "
+            f"[{selected.score}]"
+        )
+    return 0
+
+
+def _candidates_command(args: argparse.Namespace) -> int:
+    database, _ = _database()
+    rows = list_resolution_candidates(database, args.job_id)
+    if not rows:
+        print("No recorded candidates")
+        return 0
+    for row in rows:
+        warnings = json.loads(row["warnings_json"])
+        suffix = f" warnings={'; '.join(warnings)}" if warnings else ""
+        print(
+            f"{row['position']:>2}. {row['score']:>3}  {row['video_id']}  "
+            f"{row['title']} — {row['channel'] or 'unknown channel'}{suffix}"
+        )
+    return 0
+
+
+def _approve_command(args: argparse.Namespace) -> int:
+    database, _ = _database()
+    approve_candidate(database, args.job_id, args.video_id)
+    print(f"Job {args.job_id}: approved {args.video_id}")
+    return 0
+
+
+def _replace_source_command(args: argparse.Namespace) -> int:
+    database, _ = _database()
+    replace_source_url(database, args.job_id, args.url)
+    print(f"Job {args.job_id}: replacement source pinned")
+    return 0
+
+
+def _not_found_command(args: argparse.Namespace) -> int:
+    database, _ = _database()
+    mark_not_found(database, args.job_id)
+    print(f"Job {args.job_id}: marked not found")
     return 0
 
 
@@ -200,6 +260,30 @@ def build_parser() -> argparse.ArgumentParser:
     list_jobs.add_argument("--state", choices=[state.value for state in JobState])
     list_jobs.set_defaults(handler=_list_command)
 
+    resolve = subparsers.add_parser("resolve", help="search and score one pending artist/title job")
+    resolve.add_argument("job_id", type=int)
+    resolve.set_defaults(handler=_resolve_command)
+
+    candidates = subparsers.add_parser("candidates", help="show recorded candidates for one job")
+    candidates.add_argument("job_id", type=int)
+    candidates.set_defaults(handler=_candidates_command)
+
+    approve = subparsers.add_parser("approve", help="approve one recorded candidate")
+    approve.add_argument("job_id", type=int)
+    approve.add_argument("video_id")
+    approve.set_defaults(handler=_approve_command)
+
+    replace_source = subparsers.add_parser(
+        "replace-source", help="pin a replacement YouTube URL for a review job"
+    )
+    replace_source.add_argument("job_id", type=int)
+    replace_source.add_argument("url")
+    replace_source.set_defaults(handler=_replace_source_command)
+
+    not_found = subparsers.add_parser("not-found", help="mark a review job not found")
+    not_found.add_argument("job_id", type=int)
+    not_found.set_defaults(handler=_not_found_command)
+
     acquire = subparsers.add_parser(
         "acquire", help="run the native-master stage for one ready job"
     )
@@ -219,7 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
     convert_listening.set_defaults(handler=_convert_listening_command)
 
     run_queue = subparsers.add_parser(
-        "run-queue", help="recover and process queued exact-URL jobs sequentially"
+        "run-queue", help="recover and process queued jobs sequentially"
     )
     run_queue.add_argument("--once", action="store_true", help="process at most one job")
     run_queue.set_defaults(handler=_run_queue_command)

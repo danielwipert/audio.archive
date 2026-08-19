@@ -116,3 +116,19 @@ is pinned or `pending` when resolution is still required. Re-execution starts at
 the last durable boundary: verified archive items and derivatives are validated
 and reused, while yt-dlp may resume safe partial downloads in the job temporary
 directory. One recorded failure releases its claim and does not block later jobs.
+
+## DEC-011 — Candidate resolution and review boundary
+
+- **Status:** Accepted
+- **Date:** 2026-08-19
+
+Artist/title jobs are resolved through a bounded metadata-only yt-dlp search using
+the configured candidate limit. The existing deterministic scorer remains the
+sole automatic-selection policy: the top candidate must meet the configured
+minimum score and lead the runner-up by the configured margin, with no
+unrequested disqualifying version term. Every ranked candidate, score, reason,
+warning, and disqualification flag is persisted before the job leaves
+`resolving`. Automatic selections are pinned before acquisition. Ambiguous jobs
+enter `needs_review`; a user may approve a recorded candidate, supply a
+replacement YouTube URL, or mark the request `not_found`. Review jobs release
+the sequential-worker claim and do not block later queue work.

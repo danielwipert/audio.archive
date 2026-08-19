@@ -11,9 +11,16 @@ The repository is in active development. The current foundation includes:
 - a persistent SQLite job queue and audited state transitions;
 - exact YouTube URL validation;
 - CSV validation, provenance, and within-import deduplication;
-- deterministic candidate scoring and automatic-selection policy;
+- bounded yt-dlp candidate search plus deterministic scoring and review;
 - output-size and long-form segmentation planning; and
 - a command-line interface shared by the future browser UI.
+
+Artist/title jobs use metadata-only yt-dlp search with the configured candidate
+limit. Ranked candidates, scores, reasons, warnings, and disqualification flags
+are persisted before resolution finishes. Strong matches are pinned
+automatically under the configured score and margin policy. Ambiguous matches
+enter `needs_review`, where a recorded candidate can be approved, a replacement
+YouTube URL can be supplied, or the request can be marked `not_found`.
 
 The native-master acquisition slice is also implemented and deterministic-test
 verified. It uses a controlled yt-dlp command, requires Deno for full YouTube
@@ -33,16 +40,18 @@ artist tags plus the preserved source thumbnail, verifies all streams and tags
 with FFprobe, and records the encoder settings and checksums transactionally.
 Existing valid listening derivatives are reused without contacting YouTube.
 
-The sequential background worker claims one runnable job in SQLite, executes
-acquisition and every requested derivative through the shared pipeline, then
-releases the claim. A failed job is recorded without blocking later work. On a
-safe restart, stale claims are cleared, active jobs become interrupted, and
-they are requeued from the last durable boundary; a live worker is never
-interrupted by a second launcher.
+The sequential background worker claims one runnable job in SQLite and handles
+resolution, acquisition, and every requested derivative through the shared
+pipeline. An automatically resolved artist/title job can continue directly into
+acquisition under the same claim. A review job releases the claim, and a failed
+job is recorded, so neither case blocks later queue work. On a safe restart,
+stale claims are cleared, active jobs become interrupted, and they are requeued
+from the last durable boundary; a live worker is never interrupted by a second
+launcher.
 
-Audio Archive is not yet ready for normal archive use. Resolver search, the
-browser interface, Windows/Ableton acceptance, and live authorized end-to-end
-tests remain incomplete.
+Audio Archive is not yet ready for normal archive use. The browser interface,
+Windows/Ableton acceptance, and live authorized end-to-end tests remain
+incomplete.
 
 ## Windows setup
 
@@ -88,6 +97,22 @@ audio-archive init
 audio-archive --help
 ```
 
+A pending artist/title job can be resolved directly during development:
+
+```powershell
+audio-archive resolve 1
+audio-archive candidates 1
+```
+
+If the job requires review, approve a recorded video ID, supply a replacement
+URL, or mark it not found:
+
+```powershell
+audio-archive approve 1 VIDEO_ID
+audio-archive replace-source 1 https://www.youtube.com/watch?v=VIDEO_ID
+audio-archive not-found 1
+```
+
 The development-only acquisition command accepts the ID of a `ready` job:
 
 ```powershell
@@ -111,16 +136,17 @@ The `ableton` and `listen` profiles complete after their requested output is
 verified. The `complete` profile completes only after both outputs exist and
 pass verification, regardless of which conversion command runs first.
 
-Recover unfinished work and process every runnable exact-URL job sequentially:
+Recover unfinished work and process every runnable job sequentially:
 
 ```powershell
 audio-archive run-queue
 ```
 
-Use `run-queue --once` to process at most one job. Failed or interrupted work
-can be explicitly requeued with `audio-archive retry JOB_ID`; waiting work can
-be cancelled with `audio-archive cancel JOB_ID`. Search-based pending jobs stay
-queued until resolver search and manual review are connected.
+Use `run-queue --once` to process at most one job. Pending artist/title jobs are
+resolved automatically by the same worker. Jobs that enter `needs_review` are
+left for a user decision while later runnable jobs continue. Failed or
+interrupted work can be explicitly requeued with `audio-archive retry JOB_ID`;
+waiting work can be cancelled with `audio-archive cancel JOB_ID`.
 
 Verify one item by YouTube ID, or verify the complete archive:
 
