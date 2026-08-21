@@ -6,6 +6,8 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $ToolsDirectory = Join-Path $ProjectRoot "tools"
+$BgutilVersion = "1.3.1"
+$BgutilRoot = Join-Path $ToolsDirectory "bgutil-ytdlp-pot-provider"
 Set-Location $ProjectRoot
 
 function Refresh-ProcessPath {
@@ -59,6 +61,42 @@ function Copy-PortableTool(
     Write-Host "Bundled $DestinationName from $Source"
 }
 
+function Install-BgutilProvider {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw "Git is required to install the YouTube PO token provider."
+    }
+
+    if ($RefreshPortableTools -and (Test-Path $BgutilRoot)) {
+        Remove-Item -LiteralPath $BgutilRoot -Recurse -Force
+    }
+
+    if (-not (Test-Path $BgutilRoot)) {
+        & git clone --depth 1 --single-branch --branch $BgutilVersion `
+            https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git $BgutilRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not install BgUtils PO token provider $BgutilVersion."
+        }
+    }
+
+    $ServerDirectory = Join-Path $BgutilRoot "server"
+    $ServerEntry = Join-Path $ServerDirectory "src\main.ts"
+    if (-not (Test-Path $ServerEntry)) {
+        throw "BgUtils PO token provider installation is incomplete: $ServerEntry is missing."
+    }
+
+    $BundledDeno = Join-Path $ToolsDirectory "deno.exe"
+    Push-Location $ServerDirectory
+    try {
+        & $BundledDeno install --allow-scripts=npm:canvas --frozen
+        if ($LASTEXITCODE -ne 0) {
+            throw "Deno could not install BgUtils PO token provider dependencies."
+        }
+    } finally {
+        Pop-Location
+    }
+    Write-Host "BgUtils PO token provider $BgutilVersion is ready."
+}
+
 if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
     throw "Python 3.11 or newer is required. Install Python, then run setup again."
 }
@@ -78,6 +116,7 @@ if (-not (Test-Path ".venv")) {
 & .venv\Scripts\python.exe -m pip install -e ".[dev]"
 
 Copy-PortableTool "deno.exe" "DenoLand.Deno" "deno.exe"
+Install-BgutilProvider
 
 $BundledFfmpeg = Join-Path $ToolsDirectory "ffmpeg.exe"
 $BundledFfprobe = Join-Path $ToolsDirectory "ffprobe.exe"
