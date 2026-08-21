@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $ToolsDirectory = Join-Path $ProjectRoot "tools"
-$BgutilVersion = "1.3.2"
+$BgutilVersion = "1.3.1"
 $BgutilRoot = Join-Path $ToolsDirectory "bgutil-ytdlp-pot-provider"
 Set-Location $ProjectRoot
 
