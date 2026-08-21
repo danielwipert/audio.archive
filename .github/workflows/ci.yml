@@ -35,6 +35,24 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q src tests
 
+      - name: Require ASCII-safe Windows PowerShell scripts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          bad = []
+          for path in Path("scripts").glob("*.ps1"):
+              data = path.read_bytes()
+              if any(byte > 0x7F for byte in data):
+                  bad.append(str(path))
+
+          if bad:
+              raise SystemExit(
+                  "Windows PowerShell 5.1 compatibility requires ASCII-only .ps1 files: "
+                  + ", ".join(bad)
+              )
+          PY
+
       - name: Validate PowerShell scripts
         shell: pwsh
         run: |
