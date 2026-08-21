@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -89,9 +90,10 @@ class DatabaseTests(unittest.TestCase):
 
     def test_schema_one_database_migrates_worker_claim_table(self) -> None:
         legacy_path = Path(self.temporary.name) / "legacy.db"
-        with sqlite3.connect(legacy_path) as connection:
-            connection.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY)")
-            connection.execute("PRAGMA user_version = 1")
+        with closing(sqlite3.connect(legacy_path)) as connection:
+            with connection:
+                connection.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY)")
+                connection.execute("PRAGMA user_version = 1")
 
         legacy = ArchiveDatabase(legacy_path)
         legacy.initialize()
