@@ -24,6 +24,9 @@ def make_config(root: Path) -> AppConfig:
     tools.mkdir(parents=True)
     for name in ("yt-dlp", "ffmpeg", "ffprobe", "deno"):
         (tools / name).write_text("test tool", encoding="utf-8")
+    provider_entry = tools / "bgutil-ytdlp-pot-provider" / "server" / "src" / "main.ts"
+    provider_entry.parent.mkdir(parents=True)
+    provider_entry.write_text("test provider", encoding="utf-8")
     archive = root / "archive"
     return AppConfig(
         project_root=root,
@@ -182,12 +185,24 @@ class AcquisitionTests(unittest.TestCase):
             self.assertTrue(
                 yt_dlp_command[yt_dlp_command.index("--js-runtimes") + 1].startswith("deno:")
             )
+            extractor_args = [
+                yt_dlp_command[index + 1]
+                for index, value in enumerate(yt_dlp_command)
+                if value == "--extractor-args"
+            ]
+            self.assertIn("youtube:player_client=mweb", extractor_args)
+            provider_arg = next(
+                value for value in extractor_args if value.startswith("youtubepot-bgutilscript:")
+            )
+            self.assertIn("server_home=", provider_arg)
+            self.assertIn("bgutil-ytdlp-pot-provider", provider_arg)
             self.assertEqual(yt_dlp_command[yt_dlp_command.index("--format") + 1], "bestaudio/best")
             self.assertNotIn("--extract-audio", yt_dlp_command)
 
             acquisition_calls = sum("--write-info-json" in item for item in runner.commands)
             for tool in config.tools_directory.iterdir():
-                tool.unlink()
+                if tool.is_file():
+                    tool.unlink()
             reused = service.acquire(request())
             self.assertTrue(reused.reused_existing)
             self.assertEqual(
@@ -212,6 +227,21 @@ class AcquisitionTests(unittest.TestCase):
             result = AcquisitionService(config, runner).acquire(request())
             self.assertEqual(result.quality_status, "best_available_with_warnings")
             self.assertEqual(result.warnings[0].category, "javascript_runtime")
+
+    def test_missing_po_token_provider_fails_before_download(self) -> None:
+        with TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            provider_root = config.tools_directory / "bgutil-ytdlp-pot-provider"
+            for path in sorted(provider_root.rglob("*"), reverse=True):
+                if path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    path.rmdir()
+            provider_root.rmdir()
+            runner = FakeRunner()
+            with self.assertRaisesRegex(FileNotFoundError, "PO token provider"):
+                AcquisitionService(config, runner).acquire(request())
+            self.assertFalse(any("--write-info-json" in item for item in runner.commands))
 
     def test_database_pipeline_completes_archive_profile(self) -> None:
         with TemporaryDirectory() as directory:
