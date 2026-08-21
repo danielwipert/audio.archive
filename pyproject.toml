@@ -9,7 +9,7 @@ description = "Local, preservation-first YouTube audio ingestion for Ableton wor
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "bgutil-ytdlp-pot-provider==1.3.2",
+  "bgutil-ytdlp-pot-provider==1.3.1",
   "fastapi>=0.115,<1",
   "jinja2>=3.1,<4",
   "python-multipart>=0.0.9,<1",
