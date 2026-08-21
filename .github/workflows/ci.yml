@@ -62,3 +62,31 @@ jobs:
 
       - name: Test
         run: python -m pytest
+
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install project
+        run: python -m pip install -e ".[dev]"
+
+      - name: Validate scripts with Windows PowerShell
+        shell: powershell
+        run: |
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            [void][scriptblock]::Create((Get-Content -Raw $_.FullName))
+          }
+
+      - name: Compile Python
+        run: python -m compileall -q src tests
+
+      - name: Test on Windows
+        run: python -m pytest
