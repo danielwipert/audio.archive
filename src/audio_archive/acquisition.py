@@ -26,6 +26,7 @@ from .warnings import AcquisitionWarning, classify_warnings
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 NON_MEDIA_SUFFIXES = IMAGE_EXTENSIONS | {".json", ".part", ".ytdl", ".tmp"}
+BGUTIL_PROVIDER_DIRECTORY = "bgutil-ytdlp-pot-provider"
 
 
 @dataclass(frozen=True)
@@ -295,6 +296,12 @@ class AcquisitionService:
         ffmpeg = resolve_tool(self.config.ffmpeg, self.config.tools_directory)
         ffprobe = resolve_tool(self.config.ffprobe, self.config.tools_directory)
         deno = resolve_tool(self.config.deno, self.config.tools_directory)
+        bgutil_server = self.config.tools_directory / BGUTIL_PROVIDER_DIRECTORY / "server"
+        bgutil_entry = bgutil_server / "src" / "main.ts"
+        if not bgutil_entry.is_file():
+            raise FileNotFoundError(
+                "YouTube PO token provider is not installed. Run scripts\\setup.ps1 again."
+            )
 
         job_temp = self.config.temp_directory / str(request.job_id)
         job_temp.mkdir(parents=True, exist_ok=True)
@@ -319,6 +326,10 @@ class AcquisitionService:
             "--write-thumbnail",
             "--js-runtimes",
             f"deno:{deno}",
+            "--extractor-args",
+            "youtube:player_client=mweb",
+            "--extractor-args",
+            f"youtubepot-bgutilscript:server_home={bgutil_server}",
             "--paths",
             str(job_temp),
             "--output",
