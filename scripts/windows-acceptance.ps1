@@ -160,11 +160,11 @@ if ($AuthorizedUrl) {
 $CorePass = $Doctor.Passed -and $Tests.Passed -and $ArchiveVerify.Passed -and $Fixtures.Passed
 $AutomatedStatus = if ($CorePass) { "PASS" } else { "FAIL" }
 $ReleaseStatus = if (-not $CorePass -or $LiveStatus -eq "FAIL") {
-    "BLOCKED — automated acceptance failed"
+    "BLOCKED - automated acceptance failed"
 } elseif ($LiveStatus -ne "PASS") {
-    "BLOCKED — authorized live ingestion and manual acceptance remain"
+    "BLOCKED - authorized live ingestion and manual acceptance remain"
 } else {
-    "BLOCKED — manual Windows/Ableton acceptance remains"
+    "BLOCKED - manual Windows/Ableton acceptance remains"
 }
 
 $NormalPath = "Not generated"
@@ -184,7 +184,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 $PythonVersion = (& $Python --version 2>&1 | Out-String).Trim()
 
 $Report = @"
-# Audio Archive — Windows v0.3 Acceptance Report
+# Audio Archive - Windows v0.3 Acceptance Report
 
 **Generated:** $((Get-Date).ToUniversalTime().ToString("o"))  
 **Repository commit:** $GitCommit  
@@ -221,7 +221,7 @@ The following files were created through the same production segmentation code p
 $SegmentedPaths
 ~~~
 
-## Manual acceptance — must be completed by the user
+## Manual acceptance - must be completed by the user
 
 - [ ] Double-click launch.cmd; Audio Archive opens in the default browser without requiring the user to open a terminal manually.
 - [ ] Confirm the browser address is loopback-only (127.0.0.1 or another loopback address) and the queue is restored after restarting the app.
