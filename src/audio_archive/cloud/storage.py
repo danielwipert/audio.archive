@@ -83,6 +83,7 @@ class R2DeliveryStorage:
         size_bytes = path.stat().st_size
         suffix = _safe_suffix(path.suffix)
         object_key = object_key_for(job_id=job_id, role=role, sha256=actual_sha256, suffix=suffix)
+        content_disposition = _content_disposition(safe_filename)
 
         self.client.upload_file(
             str(path),
@@ -90,6 +91,7 @@ class R2DeliveryStorage:
             object_key,
             ExtraArgs={
                 "ContentType": content_type,
+                "ContentDisposition": content_disposition,
                 "Metadata": {
                     "sha256": actual_sha256,
                     "role": role,
@@ -118,16 +120,11 @@ class R2DeliveryStorage:
         )
 
     def create_download_url(self, *, object_key: str, filename: str) -> str:
-        safe_filename = validate_download_filename(filename)
-        content_disposition = _content_disposition(safe_filename)
+        validate_download_filename(filename)
         return str(
             self.client.generate_presigned_url(
                 "get_object",
-                Params={
-                    "Bucket": self.bucket,
-                    "Key": object_key,
-                    "ResponseContentDisposition": content_disposition,
-                },
+                Params={"Bucket": self.bucket, "Key": object_key},
                 ExpiresIn=self.signed_url_ttl_seconds,
             )
         )
