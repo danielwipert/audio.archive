@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import mimetypes
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,7 +12,8 @@ from zipfile import ZIP_STORED, ZipFile
 from ..ableton import AbletonResult, AbletonService
 from ..acquisition import AcquisitionRequest, AcquisitionResult, AcquisitionService
 from ..config import AppConfig
-from ..integrity import verify_sha256sums
+from ..integrity import listed_checksum_paths, verify_sha256sums, write_sha256sums
+from ..manifest import write_manifest_atomic
 from ..resolver import decide_resolution
 from ..source_resolution import search_youtube_candidates
 from ..tooling import CommandRunner
@@ -253,6 +255,7 @@ class CloudJobProcessor:
                 reviewed_by_user=str(job.get("resolution_method") or "").startswith("manual"),
             )
         )
+        _set_cloud_manifest_profile(result.item_directory, profile.value)
         heartbeat.check()
         self.database.transition_processing(
             job_id,
@@ -413,6 +416,33 @@ class CloudJobProcessor:
                 # The output is still inaccessible because delivery was never made available.
                 # R2 lifecycle deletion remains the final safety net for an orphaned object.
                 continue
+
+
+def _set_cloud_manifest_profile(item_directory: Path, cloud_profile: str) -> None:
+    """Replace the local service profile alias with the Cloud v0.1 profile name."""
+
+    manifest_path = item_directory / "metadata" / "archive.json"
+    checksum_paths = listed_checksum_paths(item_directory)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Archive manifest is invalid JSON after acquisition") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("Archive manifest must be a JSON object")
+    request = manifest.get("request")
+    if not isinstance(request, dict):
+        raise ValueError("Archive manifest has no request metadata")
+    if request.get("profile") == cloud_profile:
+        return
+    request["profile"] = cloud_profile
+    write_manifest_atomic(manifest_path, manifest)
+    write_sha256sums(item_directory, checksum_paths)
+    integrity = verify_sha256sums(item_directory)
+    if not integrity.valid:
+        raise ValueError(
+            "Cloud profile provenance update failed integrity verification: "
+            + "; ".join(integrity.errors)
+        )
 
 
 def _source_publication_files(acquisition: AcquisitionResult) -> tuple[tuple[Path, str], ...]:
