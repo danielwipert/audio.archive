@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from ..tooling import ToolExecutionError
+from .db import CloudDatabase
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,52 @@ def classify_processing_failure(stage: str, error: BaseException) -> FailureClas
     return FailureClassification(error_class=error_class, summary=summary)
 
 
+def persist_failure_classification(
+    database: CloudDatabase,
+    *,
+    job_id: int,
+    classification: FailureClassification,
+) -> None:
+    """Replace implementation-specific exception names with durable operational classes."""
+    with database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET error_class = %s, error_summary = %s, updated_at_utc = NOW()
+            WHERE id = %s AND processing_state = 'failed'
+            """,
+            (classification.error_class, classification.summary, job_id),
+        )
+        connection.execute(
+            """
+            UPDATE processing_attempts
+            SET error_class = %s, error_summary = %s
+            WHERE id = (
+                SELECT id FROM processing_attempts
+                WHERE job_id = %s
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (classification.error_class, classification.summary, job_id),
+        )
+        connection.execute(
+            """
+            UPDATE job_events
+            SET message = %s,
+                detail_json = COALESCE(detail_json, '{}'::jsonb)
+                    || jsonb_build_object('error_class', %s::text)
+            WHERE id = (
+                SELECT id FROM job_events
+                WHERE job_id = %s AND event_type = 'failed'
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (classification.summary, classification.error_class, job_id),
+        )
+
+
 def _diagnostic(error: BaseException) -> str:
     if isinstance(error, ToolExecutionError):
         result = error.result
@@ -61,8 +108,14 @@ def _redact(text: str) -> str:
     patterns = (
         (r"(?i)(authorization\s*[:=]\s*)([^\s,;]+)", r"\1[REDACTED]"),
         (r"(?i)(cookie\s*[:=]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-        (r"(?i)((?:access[_-]?key|secret[_-]?key|api[_-]?key|password)\s*[:=]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-        (r"(?i)([?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Security-Token)=)[^&\s]+", r"\1[REDACTED]"),
+        (
+            r"(?i)((?:access[_-]?key|secret[_-]?key|api[_-]?key|password)\s*[:=]\s*)([^\s,;]+)",
+            r"\1[REDACTED]",
+        ),
+        (
+            r"(?i)([?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Security-Token)=)[^&\s]+",
+            r"\1[REDACTED]",
+        ),
         (r"(?i)(bearer\s+)[A-Za-z0-9._~+\-/=]+", r"\1[REDACTED]"),
     )
     redacted = text
