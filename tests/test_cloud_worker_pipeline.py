@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
@@ -27,7 +26,6 @@ from audio_archive.cloud.worker import CloudSequentialWorker, LeaseKeeper
 from audio_archive.config import AppConfig
 from audio_archive.integrity import write_sha256sums
 from audio_archive.manifest import write_manifest_atomic
-from audio_archive.tooling import CommandResult
 from audio_archive.verify import AudioStream, MediaProbe, sha256_file
 
 
