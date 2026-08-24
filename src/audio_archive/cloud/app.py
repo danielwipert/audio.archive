@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
@@ -18,6 +18,7 @@ from .auth import (
     CloudflareAccessVerifier,
     CsrfSigner,
 )
+from .csv_input import import_cloud_csv, preview_cloud_csv
 from .db import CloudDatabase
 from .delivery import DeliveryRepository, DeliveryUnavailable, TemporaryDeliveryService
 from .models import CloudJobRequest, CloudProfile, DeliveryState, ProcessingState, display_status
@@ -133,6 +134,7 @@ def create_cloud_app(
                 "csrf_token": csrf.issue(identity),
                 "jobs": jobs,
                 "counts": repository.summarize_counts(),
+                "max_csv_bytes": deps.settings.max_csv_bytes,
             },
         )
 
@@ -165,6 +167,34 @@ def create_cloud_app(
         except (PermissionError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+
+    @app.post("/csv", response_class=HTMLResponse)
+    async def import_csv(
+        request: Request,
+        csrf_token: str = Form(...),
+        csv_file: UploadFile = File(...),
+    ):
+        identity = _identity(request)
+        _verify_csrf(csrf, csrf_token, identity)
+        try:
+            limiter.check(identity)
+            content = await csv_file.read(deps.settings.max_csv_bytes + 1)
+            preview = preview_cloud_csv(
+                filename=csv_file.filename or "import.csv",
+                content=content,
+                max_bytes=deps.settings.max_csv_bytes,
+            )
+            result = import_cloud_csv(database, preview)
+        except (PermissionError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return templates.TemplateResponse(
+            request=request,
+            name="csv_result.html",
+            context={
+                "identity": identity,
+                "result": result,
+            },
+        )
 
     @app.get("/jobs/{job_id}", response_class=HTMLResponse)
     async def job_detail(request: Request, job_id: int):
