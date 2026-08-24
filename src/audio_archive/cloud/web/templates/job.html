@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Audio Archive · Job {{ view.job.id }}{% endblock %}
+{% block content %}
+<p class="meta"><a href="/">← Queue</a> · Job {{ view.job.id }}</p>
+<section style="margin-bottom:28px">
+  <h1>{% if view.job.artist or view.job.title %}{{ view.job.artist or "" }}{% if view.job.artist and view.job.title %} — {% endif %}{{ view.job.title or "" }}{% else %}YouTube source{% endif %}</h1>
+  {% if view.job.version %}<p class="lede">Requested version: {{ view.job.version }}</p>{% endif %}
+  <div class="actions"><span class="status {{ view.job.status }}">{{ view.job.status|replace('_',' ') }}</span><span class="meta">Profile: {{ view.job.profile }}</span>{% if view.job.quality_status %}<span class="meta">Quality: {{ view.job.quality_status }}</span>{% endif %}</div>
+</section>
+
+{% if view.job.error_summary %}
+<section class="panel" style="margin-bottom:20px;border-left:4px solid var(--bad)">
+  <h2>Processing failure</h2>
+  <p><strong>{{ view.job.error_class or "processing error" }}</strong>{% if view.job.error_stage %} · {{ view.job.error_stage }}{% endif %}</p>
+  <p class="mono">{{ view.job.error_summary }}</p>
+  {% if view.job.processing_state in ["failed", "interrupted"] and view.job.delivery_state == "not_published" %}
+  <form method="post" action="/jobs/{{ view.job.id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Retry job</button></form>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if view.job.processing_state == "needs_review" %}
+<section class="panel" style="margin-bottom:20px">
+  <h2>Source review required</h2>
+  <p class="meta">The resolver did not have enough confidence to select automatically. Approve the intended source, supply an exact URL, or mark the request not found.</p>
+  {% for candidate in view.candidates %}
+  <article class="candidate">
+    <div class="scoreline">Score {{ candidate.score }}{% if candidate.disqualified %} · disqualified signal{% endif %}</div>
+    <h3>{{ candidate.title }}</h3>
+    <div class="meta">{{ candidate.channel or "Unknown channel" }}{% if candidate.duration_seconds %} · {{ candidate.duration_seconds|round|int }} sec{% endif %}</div>
+    {% if candidate.reasons_json %}<p class="meta">Reasons: {{ candidate.reasons_json|join('; ') if candidate.reasons_json is iterable and candidate.reasons_json is not string else candidate.reasons_json }}</p>{% endif %}
+    {% if candidate.warnings_json %}<p class="meta">Warnings: {{ candidate.warnings_json|join('; ') if candidate.warnings_json is iterable and candidate.warnings_json is not string else candidate.warnings_json }}</p>{% endif %}
+    <div class="actions"><a class="button secondary" href="https://www.youtube.com/watch?v={{ candidate.video_id }}" target="_blank" rel="noopener noreferrer">Open source</a><form method="post" action="/jobs/{{ view.job.id }}/approve/{{ candidate.video_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Approve</button></form></div>
+  </article>
+  {% endfor %}
+  <form method="post" action="/jobs/{{ view.job.id }}/replace-source">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="replacement-url">Use another YouTube URL</label>
+    <input id="replacement-url" name="url" type="url" required placeholder="https://www.youtube.com/watch?v=…">
+    <div class="actions"><button type="submit">Use exact URL</button></div>
+  </form>
+  <form method="post" action="/jobs/{{ view.job.id }}/not-found" style="margin-top:16px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary" type="submit">Mark not found</button></form>
+</section>
+{% endif %}
+
+{% if view.outputs %}
+<section class="panel" style="margin-bottom:20px">
+  <h2>Temporary downloads</h2>
+  {% if view.job.expires_at %}<p class="meta">Files expire: {{ view.job.expires_at }}</p>{% endif %}
+  {% for output in view.outputs %}
+  <div class="output">
+    <div><strong>{{ output.filename }}</strong><div class="meta">{{ output.role }} · {{ output.size_bytes }} bytes</div><div class="mono">SHA-256 {{ output.sha256 }}</div></div>
+    {% if view.job.status == "ready_to_download" and not output.deleted %}<a class="button" href="/jobs/{{ view.job.id }}/outputs/{{ output.id }}/download">Download</a>{% elif output.deleted %}<span class="meta">Deleted</span>{% else %}<span class="meta">Not downloadable</span>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% elif view.job.status == "files_expired" %}
+<section class="panel" style="margin-bottom:20px"><h2>Downloads expired</h2><p class="meta">Files expired. Reprocessing is required to create new downloads.</p></section>
+{% endif %}
+
+<div class="grid">
+<section class="panel" style="grid-column:span 6">
+  <h2>Request & source</h2>
+  <p class="meta">Requested URL</p><p class="mono">{{ view.job.requested_url or "Resolver search" }}</p>
+  <p class="meta">Resolved source</p><p>{{ view.job.source_creator or "—" }}{% if view.job.source_title %} · {{ view.job.source_title }}{% endif %}</p>
+  {% if view.job.warning_summary %}<p class="notice">{{ view.job.warning_summary }}</p>{% endif %}
+</section>
+<section class="panel" style="grid-column:span 6">
+  <h2>History</h2>
+  {% for event in view.events %}<div class="event"><strong>{{ event.event_type }}</strong><div class="meta">{{ event.occurred_at_utc }}</div>{% if event.message %}<div>{{ event.message }}</div>{% endif %}</div>{% else %}<p class="meta">No events recorded.</p>{% endfor %}
+</section>
+</div>
+{% endblock %}
