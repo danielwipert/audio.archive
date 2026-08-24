@@ -94,9 +94,23 @@ Every processing attempt records:
 
 This preserves the ability to move YouTube acquisition to a residential worker without changing the browser workflow or source-resolution decision.
 
-## Authentication boundary
+## Authentication
 
-Authentication remains a deployment-layer milestone immediately after the shared database/worker foundation. The application will remain private and single-user/tightly controlled in Cloud v0.1. No public anonymous submission path will be introduced.
+Cloud v0.1 will use **Cloudflare Access** in front of the private application.
+
+Initial policy:
+
+- self-hosted Access application protecting the full Audio Archive hostname
+- explicit approved-email allowlist
+- email one-time PIN as the initial identity method
+- no anonymous or bypass policy for application pages or APIs
+- health checks may be exposed separately only when they reveal no sensitive state
+
+The FastAPI origin must validate the signed `Cf-Access-Jwt-Assertion` token and its audience rather than trusting the presence of an Access header. The origin must not treat an unverified email header as authentication.
+
+The Railway-provided service hostname must not become an alternate unprotected application entry point. Production traffic should reach the application through the Access-protected hostname, with origin exposure constrained during deployment.
+
+This keeps authentication external to the application while preserving an application-level verification boundary.
 
 ## Compatibility rule
 
