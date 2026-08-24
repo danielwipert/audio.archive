@@ -31,6 +31,10 @@ dev = [
 
 [project.scripts]
 audio-archive = "audio_archive.cli:main"
+audio-archive-cloud-migrate = "audio_archive.cloud.runtime:migrate_main"
+audio-archive-cloud-web = "audio_archive.cloud.runtime:web_main"
+audio-archive-cloud-worker = "audio_archive.cloud.runtime:worker_main"
+audio-archive-cloud-cleanup = "audio_archive.cloud.runtime:cleanup_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/audio_archive"]
