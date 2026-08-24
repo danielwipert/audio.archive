@@ -11,7 +11,7 @@ from .models import (
     WorkerClaim,
     WorkerNetworkClass,
 )
-from .pipeline import CloudPipeline, CloudPipelineResult, classify_pipeline_failure
+from .pipeline import CloudPipeline, classify_pipeline_failure
 
 
 @dataclass(frozen=True)
