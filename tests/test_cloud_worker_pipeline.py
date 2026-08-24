@@ -60,7 +60,13 @@ class FakeAcquisitionService:
         manifest = {
             "schema_version": "1.2",
             "archive_id": f"youtube:{request.video_id}",
+            "content_type": "song",
             "request": {"profile": request.profile},
+            "resolution": {
+                "method": request.resolution_method,
+                "selected_video_id": request.video_id,
+                "reviewed_by_user": request.reviewed_by_user,
+            },
             "source": {
                 "platform": "youtube",
                 "id": request.video_id,
