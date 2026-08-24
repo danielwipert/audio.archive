@@ -62,17 +62,27 @@ class CloudPipeline:
         self.ableton_factory = ableton_factory
         self.package_builder = package_builder
 
-    def process(self, claim: WorkerClaim) -> CloudPipelineResult:
+    def process(
+        self,
+        claim: WorkerClaim,
+        *,
+        ownership_check: Callable[[], None] | None = None,
+    ) -> CloudPipelineResult:
+        check = ownership_check or _noop
+        check()
         job_id = claim.job_id
         workspace = CloudJobWorkspace(self.scratch_root, job_id)
         config = workspace.app_config(self.base_config)
         self._rollback_unpublished_delivery(job_id)
+        check()
         job = self.database.get_job(job_id)
         state = ProcessingState(str(job["processing_state"]))
 
         if state is ProcessingState.PENDING:
             state = self._resolve(job_id, config)
+            check()
             if state in {ProcessingState.NEEDS_REVIEW, ProcessingState.NOT_FOUND}:
+                workspace.cleanup()
                 return CloudPipelineResult(job_id, state)
             job = self.database.get_job(job_id)
 
@@ -80,8 +90,10 @@ class CloudPipeline:
             raise ValueError(f"Claimed job {job_id} is not processable from state {state.value}")
 
         acquisition = self._acquire(job_id, config)
+        check()
         profile = CloudProfile(str(self.database.get_job(job_id)["profile"]))
         _record_cloud_profile(acquisition.item_directory, profile, _pipeline_profile(profile))
+        check()
 
         ableton: AbletonResult | None = None
         package: ArchivePackage | None = None
@@ -91,10 +103,12 @@ class CloudPipeline:
                 ProcessingState.CONVERTING,
                 message="Verified source master ready for Ableton conversion",
             )
+            check()
             ableton = self.ableton_factory(config, self.runner).create(
                 acquisition.item_directory,
                 job_id=job_id,
             )
+            check()
             self.database.transition_processing(
                 job_id,
                 ProcessingState.VERIFYING_OUTPUT,
@@ -102,6 +116,7 @@ class CloudPipeline:
             )
 
         if profile is CloudProfile.PACKAGE:
+            check()
             self.database.transition_processing(
                 job_id,
                 ProcessingState.PACKAGING,
@@ -111,6 +126,7 @@ class CloudPipeline:
                 acquisition.item_directory,
                 workspace.root / "package" / f"{acquisition.video_id}-archive.zip",
             )
+            check()
 
         current = ProcessingState(str(self.database.get_job(job_id)["processing_state"]))
         if current not in {
@@ -119,6 +135,7 @@ class CloudPipeline:
             ProcessingState.PACKAGING,
         }:
             raise ValueError(f"Job {job_id} cannot publish from state {current.value}")
+        check()
         self.database.transition_processing(
             job_id,
             ProcessingState.PUBLISHING,
@@ -132,11 +149,13 @@ class CloudPipeline:
                 acquisition=acquisition,
                 ableton=ableton,
                 package=package,
+                ownership_check=check,
             )
         except Exception:
             self._rollback_unpublished_delivery(job_id)
             raise
 
+        check()
         final = (
             ProcessingState.COMPLETED
             if acquisition.quality_status == "verified_best_available"
@@ -224,6 +243,7 @@ class CloudPipeline:
         acquisition: AcquisitionResult,
         ableton: AbletonResult | None,
         package: ArchivePackage | None,
+        ownership_check: Callable[[], None],
     ) -> list[int]:
         published_at = datetime.now(UTC)
         expires_at = self.delivery.default_expiry(published_at)
@@ -231,6 +251,7 @@ class CloudPipeline:
         stem = _download_stem(job, acquisition.video_id)
         output_ids: list[int] = []
 
+        ownership_check()
         output_ids.append(
             self.delivery.publish_file(
                 job_id=job_id,
@@ -251,12 +272,14 @@ class CloudPipeline:
                 },
             )
         )
+        ownership_check()
 
         if profile in {CloudProfile.ABLETON, CloudProfile.PACKAGE}:
             if ableton is None:
                 raise ValueError("Ableton profile reached publication without verified Ableton output")
             for asset in ableton.assets:
                 segment = f".part-{asset.segment_index:03d}" if asset.segment_index is not None else ""
+                ownership_check()
                 output_ids.append(
                     self.delivery.publish_file(
                         job_id=job_id,
@@ -278,10 +301,12 @@ class CloudPipeline:
                         },
                     )
                 )
+                ownership_check()
 
         if profile is CloudProfile.PACKAGE:
             if package is None:
                 raise ValueError("Package profile reached publication without a verified ZIP")
+            ownership_check()
             output_ids.append(
                 self.delivery.publish_file(
                     job_id=job_id,
@@ -295,12 +320,15 @@ class CloudPipeline:
                     media_properties={"zip64": True, "compression": "stored"},
                 )
             )
+            ownership_check()
 
+        ownership_check()
         self.delivery.repository.mark_available(
             job_id=job_id,
             published_at_utc=published_at,
             expires_at_utc=expires_at,
         )
+        ownership_check()
         return output_ids
 
     def _rollback_unpublished_delivery(self, job_id: int) -> None:
@@ -326,10 +354,11 @@ class CloudPipeline:
             removed.append(int(row["id"]))
         if removed:
             with self.database.connect() as connection:
-                connection.execute(
-                    "DELETE FROM outputs WHERE job_id = %s AND id = ANY(%s)",
-                    (job_id, removed),
-                )
+                for output_id in removed:
+                    connection.execute(
+                        "DELETE FROM outputs WHERE job_id = %s AND id = %s",
+                        (job_id, output_id),
+                    )
 
 
 def classify_pipeline_failure(stage: ProcessingState, exc: Exception) -> str:
@@ -338,7 +367,7 @@ def classify_pipeline_failure(stage: ProcessingState, exc: Exception) -> str:
         detail = f"{exc.result.stdout}\n{exc.result.stderr}".casefold()
         if "403" in detail or "forbidden" in detail:
             return "youtube_access_403"
-        if "po token" in detail or "pot" in detail and "token" in detail:
+        if "po token" in detail or ("pot" in detail and "token" in detail):
             return "youtube_po_token"
     if stage in {ProcessingState.RESOLVING, ProcessingState.DOWNLOADING}:
         return "source_access"
@@ -405,3 +434,7 @@ def _download_stem(job: dict[str, object], fallback: str) -> str:
 def _content_type(path: Path) -> str:
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed or "application/octet-stream"
+
+
+def _noop() -> None:
+    return None
