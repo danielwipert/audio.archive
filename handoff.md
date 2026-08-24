@@ -20,31 +20,40 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
   Cloudflare R2 temporary delivery, and Cloudflare Access authentication.
 - Cloud processing state and delivery lifecycle are separated; default delivery
   retention is 24 hours and signed-download URL lifetime is 15 minutes.
-- PostgreSQL schema, migrations, cloud environment configuration, processing/delivery
-  models, job creation, state transitions, and transaction-safe worker leases are on main.
 - PR #16 is merged as commit `6f2428e77ea412d089c54c7565a49a5baf9516e6`.
   It adds private R2 publication, verified object metadata, presigned downloads,
   database-authoritative expiry, and cleanup reconciliation.
-- PR #16 passed Linux/PostgreSQL CI and Windows Python 3.14 CI before merge.
+- PR #17 is merged as commit `58378586d1fb9112c4c41a9115aa487fadedbfa7`.
+  It adds claim-specific ephemeral workspaces, PostgreSQL processing-attempt persistence,
+  worker lease heartbeats and abandoned-job recovery, and cloud orchestration around the
+  existing local acquisition and Ableton services.
+- Cloud profiles `source`, `ableton`, and `package` publish only verified outputs; partial
+  publication stays inaccessible and is rolled back best-effort.
+- Published preservation manifests retain the cloud profile requested by the user while
+  the adapter may use local service profile aliases internally.
+- PR #17 passed Linux/PostgreSQL CI, Ruff/compile/script checks, and Windows Python 3.14 CI
+  before merge.
 
 ## Cloud v0.1 boundary
 
 Cloud media is temporary in v0.1. PostgreSQL retains job/history metadata after
 media expiry, while verified source/Ableton/package files are delivered from private
-R2 and removed after the retention window. The existing local audio pipeline must be
-wrapped or cleanly extracted; its audio behavior must not be independently reimplemented.
+R2 and removed after the retention window. The cloud worker reuses the proven local
+quality-critical services rather than implementing a second audio pipeline.
 
 ## Exact next step
 
-1. Create the cloud worker/pipeline integration block.
-2. Add a job-isolated ephemeral scratch workspace for each cloud processing attempt.
-3. Adapt the proven local acquisition and Ableton services away from local SQLite /
-   permanent archive assumptions without changing source-quality or conversion policy.
-4. Drive PostgreSQL processing transitions from the cloud worker and preserve worker
-   claim/heartbeat semantics.
-5. Publish only verified requested outputs through `TemporaryDeliveryService`, then
-   finalize processing and delivery state.
-6. Add deterministic/integration tests for worker interruption, publication failure,
-   source-only output, and Ableton output.
-7. After that block passes CI, expose cloud job submission/status/download authorization
-   through the FastAPI application.
+1. Create the cloud web/API block.
+2. Add FastAPI job submission for exact URL and artist/title requests using PostgreSQL.
+3. Add job detail/status/history and output listing endpoints.
+4. Add candidate-review endpoints that can approve a candidate, accept a replacement URL,
+   or mark a job not found while preserving resolver evidence.
+5. Add signed-download authorization that returns a short-lived URL only for currently
+   downloadable outputs.
+6. Add the minimal authenticated browser UI for submit, queue/status, review, and download.
+7. Treat Cloudflare Access as the external authentication boundary and reject requests
+   that do not carry the expected Access identity headers in production mode.
+8. Add Railway web and worker process entrypoints, startup migrations/recovery, and periodic
+   delivery-expiry cleanup.
+9. Cover the API/auth/review/download lifecycle with deterministic and PostgreSQL-backed tests,
+   then deploy a private Cloud v0.1 staging instance.
