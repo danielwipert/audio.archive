@@ -5,7 +5,14 @@ from dataclasses import dataclass
 
 from ..resolver import CandidateScore, ResolutionDecision
 from .db import CloudDatabase
-from .models import ProcessingState, WorkerNetworkClass, ensure_processing_transition
+from .models import (
+    ACTIVE_PROCESSING_STATES,
+    ALLOWED_PROCESSING_TRANSITIONS,
+    DeliveryState,
+    ProcessingState,
+    WorkerNetworkClass,
+    ensure_processing_transition,
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +69,148 @@ class CloudExecutionRepository:
             )
             if update.rowcount != 1:
                 raise ValueError(f"Processing attempt {attempt_id} is already closed or missing")
+
+    def recover_abandoned_jobs(self, *, limit: int = 100) -> tuple[int, ...]:
+        """Requeue active jobs whose worker lease is no longer valid.
+
+        A publishing job that already made delivery available is finalized rather than
+        reprocessed because its verified outputs have already crossed the publication
+        boundary. Other abandoned jobs are marked interrupted and requeued from their
+        pinned source, or from pending resolution when no source is pinned.
+        """
+
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        active_values = tuple(state.value for state in ACTIVE_PROCESSING_STATES)
+        recovered: list[int] = []
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT j.*
+                FROM jobs AS j
+                WHERE j.processing_state = ANY(%s)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM worker_claims AS c
+                      WHERE c.job_id = j.id
+                        AND c.lease_expires_at_utc > NOW()
+                  )
+                ORDER BY j.id
+                FOR UPDATE OF j SKIP LOCKED
+                LIMIT %s
+                """,
+                (list(active_values), limit),
+            ).fetchall()
+            for row in rows:
+                job_id = int(row["id"])
+                old_state = ProcessingState(str(row["processing_state"]))
+                delivery_state = DeliveryState(str(row["delivery_state"]))
+
+                connection.execute(
+                    "DELETE FROM worker_claims WHERE job_id = %s AND lease_expires_at_utc <= NOW()",
+                    (job_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE processing_attempts
+                    SET ended_at_utc = COALESCE(ended_at_utc, NOW()),
+                        result = COALESCE(result, 'interrupted'),
+                        error_class = COALESCE(error_class, 'WorkerLeaseExpired'),
+                        error_summary = COALESCE(
+                            error_summary,
+                            'Worker lease expired before the processing attempt completed'
+                        )
+                    WHERE job_id = %s AND ended_at_utc IS NULL
+                    """,
+                    (job_id,),
+                )
+
+                if (
+                    old_state is ProcessingState.PUBLISHING
+                    and delivery_state is DeliveryState.AVAILABLE
+                ):
+                    final_state = (
+                        ProcessingState.COMPLETED
+                        if str(row.get("quality_status") or "") == "verified_best_available"
+                        else ProcessingState.COMPLETED_WITH_WARNINGS
+                    )
+                    ensure_processing_transition(old_state, final_state)
+                    connection.execute(
+                        """
+                        UPDATE jobs
+                        SET processing_state = %s,
+                            completed_at_utc = COALESCE(completed_at_utc, NOW()),
+                            updated_at_utc = NOW()
+                        WHERE id = %s
+                        """,
+                        (final_state.value, job_id),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO job_events (
+                            job_id, from_processing_state, to_processing_state,
+                            event_type, message
+                        ) VALUES (%s, %s, %s, 'recovered_after_publication', %s)
+                        """,
+                        (
+                            job_id,
+                            old_state.value,
+                            final_state.value,
+                            "Recovered successful publication after worker lease expiry",
+                        ),
+                    )
+                    recovered.append(job_id)
+                    continue
+
+                ensure_processing_transition(old_state, ProcessingState.INTERRUPTED)
+                target = (
+                    ProcessingState.READY
+                    if row.get("source_extractor") == "youtube"
+                    and row.get("source_id")
+                    and row.get("source_url")
+                    else ProcessingState.PENDING
+                )
+                ensure_processing_transition(ProcessingState.INTERRUPTED, target)
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET processing_state = %s,
+                        updated_at_utc = NOW(),
+                        error_stage = NULL,
+                        error_class = NULL,
+                        error_summary = NULL
+                    WHERE id = %s
+                    """,
+                    (target.value, job_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO job_events (
+                        job_id, from_processing_state, to_processing_state,
+                        event_type, message
+                    ) VALUES (%s, %s, 'interrupted', 'worker_interrupted', %s)
+                    """,
+                    (
+                        job_id,
+                        old_state.value,
+                        "Worker lease expired; ephemeral processing attempt was abandoned",
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO job_events (
+                        job_id, from_processing_state, to_processing_state,
+                        event_type, message
+                    ) VALUES (%s, 'interrupted', %s, 'requeued_after_interruption', %s)
+                    """,
+                    (
+                        job_id,
+                        target.value,
+                        "Abandoned job requeued from its durable source decision",
+                    ),
+                )
+                recovered.append(job_id)
+        return tuple(recovered)
 
     def persist_resolution(
         self,
@@ -219,9 +368,7 @@ class CloudExecutionRepository:
             if row is None:
                 raise KeyError(f"Job {job_id} does not exist")
             old_state = ProcessingState(str(row["processing_state"]))
-            if ProcessingState.FAILED not in __import__(
-                "audio_archive.cloud.models", fromlist=["ALLOWED_PROCESSING_TRANSITIONS"]
-            ).ALLOWED_PROCESSING_TRANSITIONS[old_state]:
+            if ProcessingState.FAILED not in ALLOWED_PROCESSING_TRANSITIONS[old_state]:
                 return False
             summary = str(error)[:4000]
             error_class = type(error).__name__
