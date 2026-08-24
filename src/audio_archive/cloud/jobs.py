@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
 
 from ..acquisition import AcquisitionResult
 from ..resolver import ResolutionDecision
@@ -82,7 +81,11 @@ class CloudJobRepository:
         else:
             target = ProcessingState.NOT_FOUND
 
-        selected = decision.selected.candidate if decision.method == "automatic" and decision.selected else None
+        selected = (
+            decision.selected.candidate
+            if decision.method == "automatic" and decision.selected
+            else None
+        )
         with self.database.connect() as connection:
             job = connection.execute(
                 "SELECT processing_state FROM jobs WHERE id = %s FOR UPDATE",
