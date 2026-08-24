@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,7 +19,6 @@ from audio_archive.cloud.models import (
     CloudJobRequest,
     CloudProfile,
     ProcessingState,
-    WorkerClaim,
     WorkerNetworkClass,
 )
 from audio_archive.cloud.pipeline import CloudJobProcessor
@@ -62,6 +60,7 @@ class FakeAcquisitionService:
         manifest = {
             "schema_version": "1.2",
             "archive_id": f"youtube:{request.video_id}",
+            "request": {"profile": request.profile},
             "source": {
                 "platform": "youtube",
                 "id": request.video_id,
@@ -347,7 +346,12 @@ def test_source_profile_uses_ephemeral_workspace_and_publishes_verified_source_s
     assert job["quality_status"] == "verified_best_available"
     with cloud_db.connect() as connection:
         outputs = connection.execute(
-            "SELECT role, filename, deleted_at_utc FROM outputs WHERE job_id = %s ORDER BY id",
+            """
+            SELECT role, filename, object_key, deleted_at_utc
+            FROM outputs
+            WHERE job_id = %s
+            ORDER BY id
+            """,
             (job_id,),
         ).fetchall()
         attempt = connection.execute(
@@ -363,6 +367,9 @@ def test_source_profile_uses_ephemeral_workspace_and_publishes_verified_source_s
         "ingest.log",
         "source-thumbnail.webp",
     }
+    archive_output = next(row for row in outputs if row["filename"] == "archive.json")
+    published_manifest = json.loads(storage.objects[str(archive_output["object_key"])])
+    assert published_manifest["request"]["profile"] == "source"
     assert all(row["deleted_at_utc"] is None for row in outputs)
     assert attempt["result"] == "completed"
     assert not (cloud_settings.scratch_root / f"job-{job_id}").exists()
