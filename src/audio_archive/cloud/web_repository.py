@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -114,15 +115,16 @@ class CloudWebRepository:
                     job_id, from_processing_state, to_processing_state,
                     event_type, message, detail_json
                 ) VALUES (
-                    %s, 'needs_review', 'ready', 'manual_resolution',
-                    %s, jsonb_build_object('video_id', %s, 'score', %s)
+                    %s, 'needs_review', 'ready', 'manual_resolution', %s, %s::jsonb
                 )
                 """,
                 (
                     job_id,
                     f"User approved candidate {video_id}",
-                    video_id,
-                    candidate["score"],
+                    json.dumps(
+                        {"video_id": video_id, "score": int(candidate["score"])},
+                        sort_keys=True,
+                    ),
                 ),
             )
 
@@ -163,15 +165,16 @@ class CloudWebRepository:
                     job_id, from_processing_state, to_processing_state,
                     event_type, message, detail_json
                 ) VALUES (
-                    %s, 'needs_review', 'ready', 'manual_resolution',
-                    %s, jsonb_build_object('video_id', %s, 'url', %s)
+                    %s, 'needs_review', 'ready', 'manual_resolution', %s, %s::jsonb
                 )
                 """,
                 (
                     job_id,
                     f"User supplied replacement source {pinned.video_id}",
-                    pinned.video_id,
-                    pinned.canonical_url,
+                    json.dumps(
+                        {"video_id": pinned.video_id, "url": pinned.canonical_url},
+                        sort_keys=True,
+                    ),
                 ),
             )
 
