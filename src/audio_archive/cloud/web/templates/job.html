@@ -30,7 +30,7 @@
     <div class="meta">{{ candidate.channel or "Unknown channel" }}{% if candidate.duration_seconds %} · {{ candidate.duration_seconds|round|int }} sec{% endif %}</div>
     {% if candidate.reasons_json %}<p class="meta">Reasons: {{ candidate.reasons_json|join('; ') if candidate.reasons_json is iterable and candidate.reasons_json is not string else candidate.reasons_json }}</p>{% endif %}
     {% if candidate.warnings_json %}<p class="meta">Warnings: {{ candidate.warnings_json|join('; ') if candidate.warnings_json is iterable and candidate.warnings_json is not string else candidate.warnings_json }}</p>{% endif %}
-    <div class="actions"><a class="button secondary" href="{{ candidate.url }}" target="_blank" rel="noopener noreferrer">Open source</a><form method="post" action="/jobs/{{ view.job.id }}/approve/{{ candidate.video_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Approve</button></form></div>
+    <div class="actions"><a class="button secondary" href="https://www.youtube.com/watch?v={{ candidate.video_id }}" target="_blank" rel="noopener noreferrer">Open source</a><form method="post" action="/jobs/{{ view.job.id }}/approve/{{ candidate.video_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Approve</button></form></div>
   </article>
   {% endfor %}
   <form method="post" action="/jobs/{{ view.job.id }}/replace-source">
