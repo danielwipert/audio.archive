@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Audio Archive · CSV Import{% endblock %}
+{% block content %}
+<p class="meta"><a href="/">← Queue</a> · CSV import {{ result.import_id }}</p>
+<section style="margin-bottom:26px">
+  <h1>CSV import report</h1>
+  <p class="lede">{{ result.preview.filename }} was fully validated before accepted rows were queued.</p>
+</section>
+<div class="grid" style="margin-bottom:24px">
+  <div class="panel" style="grid-column:span 4"><div class="stat"><strong>{{ result.job_ids|length }}</strong><span>Accepted jobs</span></div></div>
+  <div class="panel" style="grid-column:span 4"><div class="stat"><strong>{{ result.preview.rejected|length }}</strong><span>Rejected rows</span></div></div>
+  <div class="panel" style="grid-column:span 4"><div class="stat"><strong>{{ result.preview.duplicate_rows|length }}</strong><span>Duplicate rows skipped</span></div></div>
+</div>
+{% if result.job_ids %}
+<section class="panel" style="margin-bottom:20px">
+  <h2>Queued jobs</h2>
+  <div class="actions">{% for job_id in result.job_ids %}<a class="button secondary" href="/jobs/{{ job_id }}">Job {{ job_id }}</a>{% endfor %}</div>
+</section>
+{% endif %}
+{% if result.preview.rejected %}
+<section class="panel" style="margin-bottom:20px">
+  <h2>Rejected rows</h2>
+  <table><thead><tr><th>Row</th><th>Reason</th></tr></thead><tbody>{% for row in result.preview.rejected %}<tr><td>{{ row.row_number }}</td><td>{{ row.message }}</td></tr>{% endfor %}</tbody></table>
+</section>
+{% endif %}
+{% if result.preview.duplicate_rows %}
+<section class="panel" style="margin-bottom:20px"><h2>Duplicates skipped</h2><p class="meta">Rows: {{ result.preview.duplicate_rows|join(', ') }}</p></section>
+{% endif %}
+<section class="panel">
+  <h2>Import provenance</h2>
+  <p class="meta">SHA-256</p><p class="mono">{{ result.preview.file_sha256 }}</p>
+</section>
+{% endblock %}
