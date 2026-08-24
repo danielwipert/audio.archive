@@ -34,6 +34,7 @@ class FakeS3Client:
         metadata = dict(extra.get("Metadata") or {})
         self.objects[(bucket, key)] = {
             "ContentLength": len(data),
+            "ContentDisposition": extra.get("ContentDisposition"),
             "Metadata": metadata,
         }
         self.uploads.append(
@@ -124,10 +125,10 @@ def test_publish_file_verifies_local_digest_and_remote_size(tmp_path: Path) -> N
     assert published.size_bytes == source.stat().st_size
     assert published.filename == "Portishead - Roads.wav"
     assert published.object_key == f"delivery/7/ableton/{expected}.wav"
-    assert client.uploads[0]["extra"] == {
-        "ContentType": "audio/wav",
-        "Metadata": {"sha256": expected, "role": "ableton"},
-    }
+    extra = client.uploads[0]["extra"]
+    assert extra["ContentType"] == "audio/wav"
+    assert "filename*=UTF-8''Portishead%20-%20Roads.wav" in str(extra["ContentDisposition"])
+    assert extra["Metadata"] == {"sha256": expected, "role": "ableton"}
 
 
 def test_publish_refuses_file_that_no_longer_matches_verified_digest(tmp_path: Path) -> None:
@@ -189,7 +190,7 @@ def test_publish_deletes_remote_object_when_sha_metadata_fails(tmp_path: Path) -
     assert len(client.deleted) == 1
 
 
-def test_presigned_download_uses_locked_ttl_and_content_disposition() -> None:
+def test_presigned_download_uses_locked_ttl_and_plain_get_object() -> None:
     storage, client = _storage()
 
     url = storage.create_download_url(
@@ -201,9 +202,10 @@ def test_presigned_download_uses_locked_ttl_and_content_disposition() -> None:
     request = client.presigned[0]
     assert request["operation_name"] == "get_object"
     assert request["expires_in"] == 900
-    params = request["params"]
-    assert params["Bucket"] == "audio-archive-delivery"
-    assert "filename*=UTF-8''" in str(params["ResponseContentDisposition"])
+    assert request["params"] == {
+        "Bucket": "audio-archive-delivery",
+        "Key": f"delivery/1/source/{'a' * 64}.webm",
+    }
 
 
 def test_object_exists_distinguishes_missing_object() -> None:
