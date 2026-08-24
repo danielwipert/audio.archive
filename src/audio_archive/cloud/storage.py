@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 from urllib.parse import quote
 
 import boto3
 from botocore.client import BaseClient
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from ..verify import sha256_file
 from .config import CloudSettings
@@ -139,8 +139,8 @@ class R2DeliveryStorage:
         try:
             self.client.head_object(Bucket=self.bucket, Key=object_key)
             return True
-        except self.client.exceptions.ClientError as exc:  # type: ignore[attr-defined]
-            response: dict[str, Any] = exc.response
+        except ClientError as exc:
+            response = exc.response
             status = int(response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
             code = str(response.get("Error", {}).get("Code", ""))
             if status == 404 or code in {"404", "NoSuchKey", "NotFound"}:
