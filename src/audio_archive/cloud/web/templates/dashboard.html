@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Audio Archive · Queue{% endblock %}
+{% block content %}
+<section style="margin-bottom:28px">
+  <h1>Ingest audio from anywhere.</h1>
+  <p class="lede">Submit an exact YouTube source or let Audio Archive resolve an artist and title. Processing continues independently of this browser.</p>
+</section>
+<div class="grid" style="margin-bottom:32px">
+  <section class="panel submit">
+    <h2>New job</h2>
+    <form method="post" action="/jobs">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="grid">
+        <div style="grid-column:span 6"><label for="artist">Artist</label><input id="artist" name="artist" autocomplete="off"></div>
+        <div style="grid-column:span 6"><label for="title">Title</label><input id="title" name="title" autocomplete="off"></div>
+      </div>
+      <label for="version">Version <span style="font-weight:400;text-transform:none;letter-spacing:0">optional</span></label>
+      <input id="version" name="version" placeholder="album, live, remix…" autocomplete="off">
+      <label for="url">Exact YouTube URL <span style="font-weight:400;text-transform:none;letter-spacing:0">optional; bypasses search</span></label>
+      <input id="url" name="url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off">
+      <label for="profile">Output</label>
+      <select id="profile" name="profile">
+        <option value="ableton" selected>Ableton · source + 32-bit float WAV</option>
+        <option value="source">Source · native source + preservation metadata</option>
+        <option value="package">Package · complete ZIP handoff</option>
+      </select>
+      <div class="actions"><button type="submit">Find and Rip</button></div>
+    </form>
+  </section>
+  <aside class="panel score">
+    <h2>Queue</h2>
+    <div class="stats">
+      <div class="stat"><strong>{{ counts.total }}</strong><span>Total jobs</span></div>
+      <div class="stat"><strong>{{ counts.pending }}</strong><span>Queued</span></div>
+      <div class="stat"><strong>{{ counts.active }}</strong><span>Processing</span></div>
+      <div class="stat"><strong>{{ counts.review }}</strong><span>Needs review</span></div>
+    </div>
+    {% if counts.failed %}<p class="notice" style="margin-top:14px">{{ counts.failed }} job{% if counts.failed != 1 %}s{% endif %} currently failed and can be inspected or retried.</p>{% endif %}
+    <p class="meta" style="margin-top:16px">Cloud media is temporary. Successful delivery objects expire after the configured retention window; job history remains.</p>
+  </aside>
+</div>
+<section>
+  <h2>Recent jobs</h2>
+  {% if jobs %}
+  <table>
+    <thead><tr><th>Request</th><th>Profile</th><th>Status</th><th>Quality</th><th>Updated</th></tr></thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}"><strong>{% if job.artist or job.title %}{{ job.artist or "" }}{% if job.artist and job.title %} — {% endif %}{{ job.title or "" }}{% else %}YouTube {{ job.id }}{% endif %}</strong></a>{% if job.version %}<div class="meta">{{ job.version }}</div>{% endif %}</td>
+        <td>{{ job.profile }}</td>
+        <td><span class="status {{ job.status }}">{{ job.status|replace('_',' ') }}</span></td>
+        <td>{{ job.quality_status or "—" }}</td>
+        <td class="meta">{{ job.updated_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="panel"><p class="meta">No cloud jobs yet.</p></div>{% endif %}
+</section>
+{% endblock %}
