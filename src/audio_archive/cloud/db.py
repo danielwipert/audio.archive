@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import psycopg
 from psycopg.rows import dict_row
@@ -138,56 +138,65 @@ class CloudDatabase:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
 
-        claim_token = uuid4()
         with self.connect() as connection:
-            job = connection.execute(
-                """
-                SELECT j.id, j.processing_state
-                FROM jobs AS j
-                WHERE j.processing_state IN ('ready', 'pending')
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM worker_claims AS active_claim
-                      WHERE active_claim.job_id = j.id
-                        AND active_claim.lease_expires_at_utc > NOW()
-                  )
-                ORDER BY
-                    CASE WHEN j.processing_state = 'ready' THEN 0 ELSE 1 END,
-                    j.id
-                FOR UPDATE OF j SKIP LOCKED
-                LIMIT 1
-                """
-            ).fetchone()
-            if job is None:
-                return None
+            while True:
+                job = connection.execute(
+                    """
+                    SELECT j.id, j.processing_state
+                    FROM jobs AS j
+                    WHERE j.processing_state IN ('ready', 'pending')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM worker_claims AS active_claim
+                          WHERE active_claim.job_id = j.id
+                            AND active_claim.lease_expires_at_utc > NOW()
+                      )
+                    ORDER BY
+                        CASE WHEN j.processing_state = 'ready' THEN 0 ELSE 1 END,
+                        j.id
+                    FOR UPDATE OF j SKIP LOCKED
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if job is None:
+                    return None
 
-            job_id = int(job["id"])
-            connection.execute(
-                "DELETE FROM worker_claims WHERE job_id = %s",
-                (job_id,),
-            )
-            claim = connection.execute(
-                """
-                INSERT INTO worker_claims (
-                    job_id, worker_id, claim_token,
-                    claimed_at_utc, heartbeat_at_utc, lease_expires_at_utc
-                ) VALUES (
-                    %s, %s, %s,
-                    NOW(), NOW(), NOW() + make_interval(secs => %s)
+                job_id = int(job["id"])
+                claim_token = uuid4()
+                claim = connection.execute(
+                    """
+                    INSERT INTO worker_claims (
+                        job_id, worker_id, claim_token,
+                        claimed_at_utc, heartbeat_at_utc, lease_expires_at_utc
+                    ) VALUES (
+                        %s, %s, %s,
+                        NOW(), NOW(), NOW() + make_interval(secs => %s)
+                    )
+                    ON CONFLICT (job_id) DO UPDATE
+                    SET worker_id = EXCLUDED.worker_id,
+                        claim_token = EXCLUDED.claim_token,
+                        claimed_at_utc = NOW(),
+                        heartbeat_at_utc = NOW(),
+                        lease_expires_at_utc = EXCLUDED.lease_expires_at_utc
+                    WHERE worker_claims.lease_expires_at_utc <= NOW()
+                    RETURNING claimed_at_utc, lease_expires_at_utc
+                    """,
+                    (job_id, worker_id, claim_token, lease_seconds),
+                ).fetchone()
+                if claim is None:
+                    # A previous worker renewed the lease after our SELECT.
+                    # READ COMMITTED gives the next SELECT a fresh snapshot,
+                    # so the renewed job is skipped and another job may be claimed.
+                    continue
+
+                return WorkerClaim(
+                    job_id=job_id,
+                    worker_id=worker_id,
+                    claim_token=claim_token,
+                    processing_state=ProcessingState(str(job["processing_state"])),
+                    claimed_at_utc=_datetime(claim["claimed_at_utc"]),
+                    lease_expires_at_utc=_datetime(claim["lease_expires_at_utc"]),
                 )
-                RETURNING claimed_at_utc, lease_expires_at_utc
-                """,
-                (job_id, worker_id, claim_token, lease_seconds),
-            ).fetchone()
-            assert claim is not None
-            return WorkerClaim(
-                job_id=job_id,
-                worker_id=worker_id,
-                claim_token=claim_token,
-                processing_state=ProcessingState(str(job["processing_state"])),
-                claimed_at_utc=_datetime(claim["claimed_at_utc"]),
-                lease_expires_at_utc=_datetime(claim["lease_expires_at_utc"]),
-            )
 
     def heartbeat_claim(
         self,
