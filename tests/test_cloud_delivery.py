@@ -70,6 +70,33 @@ def _published_object(job_id: int) -> PublishedObject:
     )
 
 
+def _move_publication_into_past(
+    database: CloudDatabase,
+    *,
+    job_id: int,
+    output_id: int,
+) -> None:
+    with database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET published_at_utc = NOW() - INTERVAL '2 days',
+                expires_at_utc = NOW() - INTERVAL '1 day'
+            WHERE id = %s
+            """,
+            (job_id,),
+        )
+        connection.execute(
+            """
+            UPDATE outputs
+            SET published_at_utc = NOW() - INTERVAL '2 days',
+                expires_at_utc = NOW() - INTERVAL '1 day'
+            WHERE id = %s
+            """,
+            (output_id,),
+        )
+
+
 def test_output_cannot_be_recorded_before_publishing(delivery_db: CloudDatabase) -> None:
     job_id = delivery_db.create_job(
         CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", origin="url")
@@ -158,16 +185,7 @@ def test_expired_delivery_stops_download_before_object_cleanup(delivery_db: Clou
         expires_at_utc=expires,
     )
     delivery_db.transition_processing(job_id, ProcessingState.COMPLETED)
-
-    with delivery_db.connect() as connection:
-        connection.execute(
-            "UPDATE jobs SET expires_at_utc = NOW() - INTERVAL '1 second' WHERE id = %s",
-            (job_id,),
-        )
-        connection.execute(
-            "UPDATE outputs SET expires_at_utc = NOW() - INTERVAL '1 second' WHERE id = %s",
-            (output_id,),
-        )
+    _move_publication_into_past(delivery_db, job_id=job_id, output_id=output_id)
 
     with pytest.raises(DeliveryUnavailable):
         repository.get_downloadable_output(job_id=job_id, output_id=output_id)
@@ -202,16 +220,7 @@ def test_cleanup_marks_job_deleted_after_objects_are_gone(delivery_db: CloudData
         expires_at_utc=expires,
     )
     delivery_db.transition_processing(job_id, ProcessingState.COMPLETED)
-
-    with delivery_db.connect() as connection:
-        connection.execute(
-            "UPDATE jobs SET expires_at_utc = NOW() - INTERVAL '1 second' WHERE id = %s",
-            (job_id,),
-        )
-        connection.execute(
-            "UPDATE outputs SET expires_at_utc = NOW() - INTERVAL '1 second' WHERE id = %s",
-            (output_id,),
-        )
+    _move_publication_into_past(delivery_db, job_id=job_id, output_id=output_id)
 
     assert service.cleanup_expired() == 1
     assert published.object_key in storage.deleted
