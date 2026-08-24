@@ -5,6 +5,7 @@ from threading import Event, Lock, Thread
 
 from .config import CloudSettings
 from .db import CloudDatabase, LostWorkerClaim
+from .errors import classify_processing_failure, persist_failure_classification
 from .execution import CloudExecutionRepository
 from .models import ProcessingState, WorkerClaim
 from .pipeline import CloudJobProcessor, CloudProcessingResult
@@ -128,7 +129,15 @@ class CloudSequentialWorker:
             lost_claim = True
             error = str(exc)
         except Exception as exc:  # noqa: BLE001 - processor records durable job failure
-            error = str(exc)
+            job = self.database.get_job(claim.job_id)
+            stage = str(job.get("error_stage") or job["processing_state"])
+            classification = classify_processing_failure(stage, exc)
+            persist_failure_classification(
+                self.database,
+                job_id=claim.job_id,
+                classification=classification,
+            )
+            error = classification.summary
         finally:
             if not lost_claim:
                 try:
