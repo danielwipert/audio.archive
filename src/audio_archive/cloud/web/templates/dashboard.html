@@ -3,7 +3,7 @@
 {% block content %}
 <section style="margin-bottom:28px">
   <h1>Ingest audio from anywhere.</h1>
-  <p class="lede">Submit an exact YouTube source or let Audio Archive resolve an artist and title. Processing continues independently of this browser.</p>
+  <p class="lede">Submit an exact YouTube source, let Audio Archive resolve an artist and title, or upload a CSV batch. Processing continues independently of this browser.</p>
 </section>
 <div class="grid" style="margin-bottom:32px">
   <section class="panel submit">
@@ -25,6 +25,15 @@
         <option value="package">Package · complete ZIP handoff</option>
       </select>
       <div class="actions"><button type="submit">Find and Rip</button></div>
+    </form>
+    <hr style="border:0;border-top:1px solid var(--line);margin:26px 0">
+    <h2 style="font-size:20px">CSV batch</h2>
+    <p class="meta">UTF-8 CSV with <span class="mono">artist,title,version,url,profile</span>. Artist/title or URL is required per row. Profiles: ableton, source, package.</p>
+    <form method="post" action="/csv" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="csv-file">CSV file</label>
+      <input id="csv-file" name="csv_file" type="file" accept=".csv,text/csv" required>
+      <div class="actions"><button class="secondary" type="submit">Validate and Queue</button><span class="meta">Max {{ (max_csv_bytes / 1048576)|round(1) }} MiB</span></div>
     </form>
   </section>
   <aside class="panel score">
