@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZIP_STORED, ZipFile
 
+from ..integrity import verify_sha256sums
 from ..verify import sha256_file
 
 
@@ -20,6 +21,12 @@ def build_archive_package(item_directory: Path, output_path: Path) -> ArchivePac
     checksums = item_directory / "checksums" / "SHA256SUMS"
     if not manifest.is_file() or not checksums.is_file():
         raise ValueError("Archive package requires verified metadata and SHA256SUMS")
+    integrity = verify_sha256sums(item_directory)
+    if not integrity.valid:
+        raise ValueError(
+            "Archive package source tree failed integrity verification: "
+            + "; ".join(integrity.errors)
+        )
 
     files = sorted(path for path in item_directory.rglob("*") if path.is_file())
     if not files:
