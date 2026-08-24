@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
+from uuid import UUID
 
 
 class ProcessingState(StrEnum):
@@ -41,6 +44,36 @@ class WorkerNetworkClass(StrEnum):
     CLOUD_DATACENTER = "cloud_datacenter"
     RESIDENTIAL = "residential"
     UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class CloudJobRequest:
+    artist: str | None = None
+    title: str | None = None
+    version: str | None = None
+    url: str | None = None
+    profile: CloudProfile = CloudProfile.ABLETON
+    origin: str = "manual"
+    import_id: int | None = None
+    import_row: int | None = None
+
+    def validate(self) -> None:
+        if not self.url and (not self.artist or not self.title):
+            raise ValueError("artist and title are required unless a URL is supplied")
+        if self.origin not in {"manual", "url", "csv", "cli"}:
+            raise ValueError(f"Unknown job origin: {self.origin}")
+        if self.import_row is not None and self.import_row <= 0:
+            raise ValueError("import_row must be positive")
+
+
+@dataclass(frozen=True)
+class WorkerClaim:
+    job_id: int
+    worker_id: str
+    claim_token: UUID
+    processing_state: ProcessingState
+    claimed_at_utc: datetime
+    lease_expires_at_utc: datetime
 
 
 ACTIVE_PROCESSING_STATES = {
@@ -171,7 +204,10 @@ def ensure_delivery_transition(old: DeliveryState, new: DeliveryState) -> None:
 
 def display_status(processing: ProcessingState, delivery: DeliveryState) -> str:
     """Return the user-facing cloud status without mutating processing history."""
-    if delivery in {DeliveryState.EXPIRED, DeliveryState.DELETED} and processing in SUCCESS_PROCESSING_STATES:
+    if (
+        delivery in {DeliveryState.EXPIRED, DeliveryState.DELETED}
+        and processing in SUCCESS_PROCESSING_STATES
+    ):
         return "files_expired"
     if delivery is DeliveryState.AVAILABLE and processing in SUCCESS_PROCESSING_STATES:
         return "ready_to_download"
