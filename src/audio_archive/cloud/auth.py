@@ -31,6 +31,7 @@ class CloudWebSettings:
     allowed_emails: frozenset[str]
     retention_hours: int = 24
     signed_url_ttl_seconds: int = 900
+    max_csv_bytes: int = 5 * 1024 * 1024
 
     def __post_init__(self) -> None:
         if not self.database_url.startswith(("postgresql://", "postgresql+psycopg://")):
@@ -53,6 +54,8 @@ class CloudWebSettings:
             raise ValueError("AUDIO_ARCHIVE_RETENTION_HOURS must be positive")
         if not 60 <= self.signed_url_ttl_seconds <= 3600:
             raise ValueError("AUDIO_ARCHIVE_SIGNED_URL_TTL_SECONDS must be between 60 and 3600")
+        if self.max_csv_bytes <= 0:
+            raise ValueError("AUDIO_ARCHIVE_MAX_CSV_BYTES must be positive")
 
     @property
     def certs_url(self) -> str:
@@ -80,6 +83,7 @@ class CloudWebSettings:
             signed_url_ttl_seconds=_positive_int(
                 "AUDIO_ARCHIVE_SIGNED_URL_TTL_SECONDS", 900
             ),
+            max_csv_bytes=_positive_int("AUDIO_ARCHIVE_MAX_CSV_BYTES", 5 * 1024 * 1024),
         )
 
     def __repr__(self) -> str:
@@ -91,10 +95,10 @@ class CloudWebSettings:
             "r2_access_key_id='***', r2_secret_access_key='***', "
             f"access_team_domain={self.access_team_domain!r}, "
             f"access_audience={self.access_audience!r}, "
-            "csrf_secret='***', "
-            f"allowed_emails={sorted(self.allowed_emails)!r}, "
+            "csrf_secret='***', allowed_emails='***', "
             f"retention_hours={self.retention_hours}, "
-            f"signed_url_ttl_seconds={self.signed_url_ttl_seconds})"
+            f"signed_url_ttl_seconds={self.signed_url_ttl_seconds}, "
+            f"max_csv_bytes={self.max_csv_bytes})"
         )
 
 
