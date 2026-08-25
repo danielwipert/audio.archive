@@ -79,6 +79,9 @@ jobs:
       - name: Test
         run: python -m pytest
 
+      - name: Build cloud production container
+        run: docker build --tag audio-archive-cloud:ci .
+
   windows-test:
     runs-on: windows-latest
     steps:
