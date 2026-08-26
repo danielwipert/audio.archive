@@ -1,8 +1,8 @@
 # Audio Archive - Session Handoff
 
-**Last updated:** 2026-08-23  
+**Last updated:** 2026-08-26  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `main`
+**Working branch:** `cloud/07-ytdlp-proxy`
 
 ## Session protocol
 
@@ -11,49 +11,44 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 ## Current verified state
 
-- Local Windows v0.3 remains the audio-quality reference implementation for source
-  acquisition, PO-token handling, FFprobe verification, checksums, Ableton conversion,
-  and long-form segmentation.
-- `CLOUD_SPEC.md` defines Cloud v0.1 as a private browser-accessible service with
-  temporary downloadable outputs rather than permanent cloud media retention.
-- Cloud deployment decisions are locked: Railway web + worker, Railway PostgreSQL,
-  Cloudflare R2 temporary delivery, and Cloudflare Access authentication.
-- Cloud processing state and delivery lifecycle are separated; default delivery
-  retention is 24 hours and signed-download URL lifetime is 15 minutes.
-- PR #16 is merged as commit `6f2428e77ea412d089c54c7565a49a5baf9516e6`.
-  It adds private R2 publication, verified object metadata, presigned downloads,
-  database-authoritative expiry, and cleanup reconciliation.
-- PR #17 is merged as commit `58378586d1fb9112c4c41a9115aa487fadedbfa7`.
-  It adds claim-specific ephemeral workspaces, PostgreSQL processing-attempt persistence,
-  worker lease heartbeats and abandoned-job recovery, and cloud orchestration around the
-  existing local acquisition and Ableton services.
-- Cloud profiles `source`, `ableton`, and `package` publish only verified outputs; partial
-  publication stays inaccessible and is rolled back best-effort.
-- Published preservation manifests retain the cloud profile requested by the user while
-  the adapter may use local service profile aliases internally.
-- PR #17 passed Linux/PostgreSQL CI, Ruff/compile/script checks, and Windows Python 3.14 CI
-  before merge.
+- Local Windows v0.3 remains the audio-quality reference implementation for native
+  YouTube acquisition, FFprobe verification, checksums, Ableton 32-bit float WAV
+  conversion, and long-form segmentation.
+- Cloud v0.1 is deployed on Railway with separate web and worker services plus Railway
+  PostgreSQL. The worker is private/unexposed and the web service is publicly routed only
+  through the protected application hostname.
+- Cloudflare R2 bucket `audio-archive-delivery` is private, has temporary retention safety
+  rules, and is configured for signed download delivery.
+- Cloudflare Access is active in front of the cloud web app and application-side JWT/email
+  verification is working.
+- `GET /healthz` returns 200 through the custom Cloudflare hostname.
+- PR #20 is merged and provides the production Docker image, Railway web/worker runtime,
+  migrations, worker recovery/polling, and deployment runbook.
+- The first exact-URL Ableton acceptance job successfully traversed browser submission,
+  PostgreSQL persistence, worker claim, and yt-dlp execution, then failed at native source
+  acquisition because YouTube returned HTTP 429 / "Sign in to confirm you're not a bot".
+- This is classified as cloud egress/network reputation failure, not an audio-quality or
+  conversion failure. Do not weaken source-quality rules or silently transcode around it.
+- Branch `cloud/07-ytdlp-proxy` adds optional worker-only yt-dlp proxy routing using
+  `AUDIO_ARCHIVE_YTDLP_PROXY`. It applies to exact URL and artist/title yt-dlp calls and
+  redacts proxy credentials from command metadata before logs/diagnostics persist argv.
 
 ## Cloud v0.1 boundary
 
-Cloud media is temporary in v0.1. PostgreSQL retains job/history metadata after
-media expiry, while verified source/Ableton/package files are delivered from private
-R2 and removed after the retention window. The cloud worker reuses the proven local
-quality-critical services rather than implementing a second audio pipeline.
+Cloud media remains temporary. PostgreSQL retains job/history metadata after media expiry,
+while verified source/Ableton/package files are delivered from private R2 and removed after
+the retention window. The cloud worker reuses the proven local quality-critical services.
 
 ## Exact next step
 
-1. Create the cloud web/API block.
-2. Add FastAPI job submission for exact URL and artist/title requests using PostgreSQL.
-3. Add job detail/status/history and output listing endpoints.
-4. Add candidate-review endpoints that can approve a candidate, accept a replacement URL,
-   or mark a job not found while preserving resolver evidence.
-5. Add signed-download authorization that returns a short-lived URL only for currently
-   downloadable outputs.
-6. Add the minimal authenticated browser UI for submit, queue/status, review, and download.
-7. Treat Cloudflare Access as the external authentication boundary and reject requests
-   that do not carry the expected Access identity headers in production mode.
-8. Add Railway web and worker process entrypoints, startup migrations/recovery, and periodic
-   delivery-expiry cleanup.
-9. Cover the API/auth/review/download lifecycle with deterministic and PostgreSQL-backed tests,
-   then deploy a private Cloud v0.1 staging instance.
+1. Let CI validate `cloud/07-ytdlp-proxy` and merge its PR to `main`.
+2. Obtain one suitable US proxy endpoint for authorized YouTube acquisition.
+3. Add the complete proxy URL only to the Railway worker as the secret variable
+   `AUDIO_ARCHIVE_YTDLP_PROXY`; do not add it to the web service or GitHub.
+4. Confirm the worker redeploys Active and logs only that proxy routing is enabled, never
+   the proxy value.
+5. Retry the same exact-URL Ableton acceptance job.
+6. If acquisition succeeds, verify native source provenance, Ableton 32-bit float PCM,
+   SHA-256 values, private R2 publication, signed download, and cleanup behavior.
+7. If YouTube still returns 403/429, treat the proxy endpoint itself as the remaining
+   infrastructure variable and do not change the audio pipeline.

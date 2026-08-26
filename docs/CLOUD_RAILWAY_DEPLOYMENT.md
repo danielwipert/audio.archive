@@ -85,6 +85,18 @@ AUDIO_ARCHIVE_WORKER_POLL_SECONDS=2
 AUDIO_ARCHIVE_CLEANUP_INTERVAL_SECONDS=300
 ```
 
+If Railway datacenter egress is blocked by YouTube, configure one worker-only proxy
+secret:
+
+```text
+AUDIO_ARCHIVE_YTDLP_PROXY=http://<username>:<password>@<proxy-host>:<port>
+```
+
+The worker injects this proxy into all yt-dlp calls, including exact-URL acquisition
+and artist/title search. The proxy value is redacted from returned command metadata
+before ingest logs or job diagnostics can persist the argv. Never commit the proxy
+URL or credentials to GitHub, and do not add this variable to the web service.
+
 The worker:
 
 - waits for the PostgreSQL schema created by the web service;
@@ -140,5 +152,7 @@ Acceptance sequence:
 7. Confirm the job exposes its SHA-256 and the R2 object is private outside the
    signed download flow.
 
-A cloud YouTube HTTP 403 is an infrastructure/network-class failure until proven
-otherwise; do not weaken the source-quality rules or silently transcode around it.
+A cloud YouTube HTTP 403 or 429 is an infrastructure/network-class failure until
+proven otherwise; do not weaken the source-quality rules or silently transcode around
+it. If a proxy is configured, retry the same exact-URL job only after the worker has
+redeployed and its startup log confirms proxy routing is enabled.

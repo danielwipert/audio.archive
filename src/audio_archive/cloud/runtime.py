@@ -12,12 +12,13 @@ import psycopg
 import uvicorn
 
 from ..config import discover_project_root, load_config
-from ..tooling import SubprocessRunner
+from ..tooling import CommandRunner, SubprocessRunner
 from .app import build_web_dependencies, create_cloud_app
 from .config import CloudSettings
 from .db import CloudDatabase
 from .delivery import DeliveryRepository, TemporaryDeliveryService
 from .pipeline import CloudJobProcessor
+from .proxy import YtDlpProxyRunner
 from .storage import R2DeliveryStorage
 from .worker import CloudSequentialWorker
 
@@ -68,6 +69,15 @@ def _wait_for_schema(database: CloudDatabase, *, timeout_seconds: int = 180) -> 
     raise RuntimeError("Cloud database schema was not ready before worker startup timeout") from last_error
 
 
+def _worker_runner() -> CommandRunner:
+    runner: CommandRunner = SubprocessRunner()
+    proxy_url = os.getenv("AUDIO_ARCHIVE_YTDLP_PROXY", "").strip()
+    if proxy_url:
+        LOGGER.info("YouTube proxy routing is enabled for worker yt-dlp calls")
+        runner = YtDlpProxyRunner(runner, proxy_url)
+    return runner
+
+
 def _build_worker(settings: CloudSettings) -> tuple[CloudSequentialWorker, TemporaryDeliveryService]:
     database = CloudDatabase(settings.database_url)
     _wait_for_schema(database)
@@ -81,7 +91,7 @@ def _build_worker(settings: CloudSettings) -> tuple[CloudSequentialWorker, Tempo
         database=database,
         settings=settings,
         base_config=load_config(),
-        runner=SubprocessRunner(),
+        runner=_worker_runner(),
         delivery=delivery,
     )
     worker = CloudSequentialWorker(
