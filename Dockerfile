@@ -33,18 +33,17 @@ COPY migrations ./migrations
 
 RUN python -m pip install --no-cache-dir ".[cloud]"
 
-RUN mkdir -p /app/tools \
-    && git clone --depth 1 --single-branch --branch "${BGUTIL_VERSION}" \
+RUN useradd --create-home --uid 10001 audioarchive \
+    && mkdir -p /work/jobs /app/tools \
+    && chown -R audioarchive:audioarchive /work /home/audioarchive /app/tools
+
+USER audioarchive
+
+RUN git clone --depth 1 --single-branch --branch "${BGUTIL_VERSION}" \
        https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
        /app/tools/bgutil-ytdlp-pot-provider \
     && cd /app/tools/bgutil-ytdlp-pot-provider/server \
     && deno install --allow-scripts=npm:canvas --frozen \
     && test -f /app/tools/bgutil-ytdlp-pot-provider/server/src/main.ts
-
-RUN useradd --create-home --uid 10001 audioarchive \
-    && mkdir -p /work/jobs \
-    && chown -R audioarchive:audioarchive /work /home/audioarchive
-
-USER audioarchive
 
 CMD ["python", "-m", "audio_archive.cloud.runtime", "web"]

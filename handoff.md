@@ -1,8 +1,8 @@
 # Audio Archive - Session Handoff
 
-**Last updated:** 2026-08-26  
+**Last updated:** 2026-08-27  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `cloud/07-ytdlp-proxy`
+**Working branch:** `fix/bgutil-runtime-permissions`
 
 ## Session protocol
 
@@ -11,44 +11,40 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 ## Current verified state
 
-- Local Windows v0.3 remains the audio-quality reference implementation for native
-  YouTube acquisition, FFprobe verification, checksums, Ableton 32-bit float WAV
-  conversion, and long-form segmentation.
-- Cloud v0.1 is deployed on Railway with separate web and worker services plus Railway
-  PostgreSQL. The worker is private/unexposed and the web service is publicly routed only
-  through the protected application hostname.
-- Cloudflare R2 bucket `audio-archive-delivery` is private, has temporary retention safety
-  rules, and is configured for signed download delivery.
-- Cloudflare Access is active in front of the cloud web app and application-side JWT/email
-  verification is working.
-- `GET /healthz` returns 200 through the custom Cloudflare hostname.
-- PR #20 is merged and provides the production Docker image, Railway web/worker runtime,
-  migrations, worker recovery/polling, and deployment runbook.
-- The first exact-URL Ableton acceptance job successfully traversed browser submission,
-  PostgreSQL persistence, worker claim, and yt-dlp execution, then failed at native source
-  acquisition because YouTube returned HTTP 429 / "Sign in to confirm you're not a bot".
-- This is classified as cloud egress/network reputation failure, not an audio-quality or
-  conversion failure. Do not weaken source-quality rules or silently transcode around it.
-- Branch `cloud/07-ytdlp-proxy` adds optional worker-only yt-dlp proxy routing using
-  `AUDIO_ARCHIVE_YTDLP_PROXY`. It applies to exact URL and artist/title yt-dlp calls and
-  redacts proxy credentials from command metadata before logs/diagnostics persist argv.
+- Cloud v0.1 is deployed on Railway with separate web and worker services, PostgreSQL,
+  private Cloudflare R2 temporary delivery, and Cloudflare Access protection.
+- PR #21 is merged. The Railway worker routes yt-dlp traffic through the worker-only
+  `AUDIO_ARCHIVE_YTDLP_PROXY` secret and redacts the proxy value from persisted command
+  metadata.
+- A DataImpulse residential proxy is configured in Railway and the worker logs confirm
+  proxy routing is enabled.
+- The first proxied exact-URL Ableton job completed end to end: browser -> PostgreSQL ->
+  worker -> YouTube -> verified source -> 32-bit float Ableton WAV -> SHA-256 -> R2 ->
+  signed download.
+- The Ableton intermediate is verified `pcm_f32le`, 44.1 kHz stereo, with no resampling,
+  normalization, or dither.
+- The acquisition was correctly classified `fallback_source`: yt-dlp used combined format
+  18 and codec-copy demuxed AAC because the BgUtils PO-token provider failed at runtime.
+- The failure evidence is `ERR_INVALID_PACKAGE_CONFIG` plus `Permission denied` while Deno
+  reads the provider's `server/node_modules/.deno/.../package.json`. The production image
+  installed BgUtils as root and only later switched to UID 10001.
+- Branch `fix/bgutil-runtime-permissions` installs the BgUtils provider and Deno dependencies
+  as the final `audioarchive` runtime user and adds a CI container check for runtime access to
+  the provider dependency tree.
 
 ## Cloud v0.1 boundary
 
 Cloud media remains temporary. PostgreSQL retains job/history metadata after media expiry,
 while verified source/Ableton/package files are delivered from private R2 and removed after
-the retention window. The cloud worker reuses the proven local quality-critical services.
+the retention window. Source-quality rules remain unchanged.
 
 ## Exact next step
 
-1. Let CI validate `cloud/07-ytdlp-proxy` and merge its PR to `main`.
-2. Obtain one suitable US proxy endpoint for authorized YouTube acquisition.
-3. Add the complete proxy URL only to the Railway worker as the secret variable
-   `AUDIO_ARCHIVE_YTDLP_PROXY`; do not add it to the web service or GitHub.
-4. Confirm the worker redeploys Active and logs only that proxy routing is enabled, never
-   the proxy value.
-5. Retry the same exact-URL Ableton acceptance job.
-6. If acquisition succeeds, verify native source provenance, Ableton 32-bit float PCM,
-   SHA-256 values, private R2 publication, signed download, and cleanup behavior.
-7. If YouTube still returns 403/429, treat the proxy endpoint itself as the remaining
-   infrastructure variable and do not change the audio pipeline.
+1. Let CI validate `fix/bgutil-runtime-permissions` and merge its PR to `main`.
+2. Confirm Railway redeploys both services from the new production image and the worker is
+   Active with proxy routing enabled.
+3. Retry the same exact YouTube URL using the Ableton profile.
+4. Inspect `archive.json`: the BgUtils permission warnings must be gone and audio-only source
+   formats should no longer be skipped for missing GVS PO token.
+5. Accept highest-quality acquisition only if the resulting quality status and selection
+   evidence support the strongest accessible source under the project policy.

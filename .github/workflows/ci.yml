@@ -82,6 +82,17 @@ jobs:
       - name: Build cloud production container
         run: docker build --tag audio-archive-cloud:ci .
 
+      - name: Verify BgUtils runtime permissions
+        run: |
+          docker run --rm --entrypoint /bin/sh audio-archive-cloud:ci -lc '
+            set -eu
+            test "$(id -u)" = "10001"
+            test -r /app/tools/bgutil-ytdlp-pot-provider/server/src/main.ts
+            test -w /app/tools/bgutil-ytdlp-pot-provider/server/node_modules/.deno
+            unreadable="$(find /app/tools/bgutil-ytdlp-pot-provider/server/node_modules -type f -name package.json ! -readable -print -quit)"
+            test -z "$unreadable"
+          '
+
   windows-test:
     runs-on: windows-latest
     steps:
