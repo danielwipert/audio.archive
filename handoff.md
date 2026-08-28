@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-08-27  
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `fix/bgutil-runtime-permissions`
+**Working branch:** `main`
 
 ## Session protocol
 
@@ -23,14 +23,14 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
   signed download.
 - The Ableton intermediate is verified `pcm_f32le`, 44.1 kHz stereo, with no resampling,
   normalization, or dither.
-- The acquisition was correctly classified `fallback_source`: yt-dlp used combined format
+- That acquisition was correctly classified `fallback_source`: yt-dlp used combined format
   18 and codec-copy demuxed AAC because the BgUtils PO-token provider failed at runtime.
-- The failure evidence is `ERR_INVALID_PACKAGE_CONFIG` plus `Permission denied` while Deno
-  reads the provider's `server/node_modules/.deno/.../package.json`. The production image
-  installed BgUtils as root and only later switched to UID 10001.
-- Branch `fix/bgutil-runtime-permissions` installs the BgUtils provider and Deno dependencies
-  as the final `audioarchive` runtime user and adds a CI container check for runtime access to
-  the provider dependency tree.
+- The failure evidence was `ERR_INVALID_PACKAGE_CONFIG` plus `Permission denied` while Deno
+  read the provider's `server/node_modules/.deno/.../package.json`.
+- PR #22 is merged. The production image now creates the `audioarchive` runtime user before
+  installing BgUtils and installs the provider/Deno dependency tree as UID 10001.
+- CI run #51 passed, including a container-level regression check that runs as UID 10001 and
+  verifies access to the BgUtils dependency tree.
 
 ## Cloud v0.1 boundary
 
@@ -40,11 +40,10 @@ the retention window. Source-quality rules remain unchanged.
 
 ## Exact next step
 
-1. Let CI validate `fix/bgutil-runtime-permissions` and merge its PR to `main`.
-2. Confirm Railway redeploys both services from the new production image and the worker is
-   Active with proxy routing enabled.
-3. Retry the same exact YouTube URL using the Ableton profile.
-4. Inspect `archive.json`: the BgUtils permission warnings must be gone and audio-only source
-   formats should no longer be skipped for missing GVS PO token.
-5. Accept highest-quality acquisition only if the resulting quality status and selection
+1. Confirm Railway redeploys the worker from merged `main` and becomes Active with proxy
+   routing enabled.
+2. Retry the same exact YouTube URL using the Ableton profile.
+3. Inspect the new `archive.json`: the BgUtils permission warnings must be gone and audio-only
+   source formats should no longer be skipped because of this runtime-permission failure.
+4. Accept highest-quality acquisition only if the resulting quality status and selection
    evidence support the strongest accessible source under the project policy.
