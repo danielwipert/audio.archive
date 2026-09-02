@@ -1,8 +1,8 @@
 # Audio Archive - Session Handoff
 
-**Last updated:** 2026-08-27  
+**Last updated:** 2026-09-02
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `fix/bgutil-1.3.2`
+**Working branch:** `fix/cloud-youtube-ingestion`
 
 ## Session protocol
 
@@ -19,15 +19,15 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
   checksums, R2 publication, and signed downloads.
 - PR #22 fixed the BgUtils filesystem-permission failure by installing the provider as the
   final UID 10001 runtime user; that permission error is gone in the latest Railway run.
-- The latest run still classified `fallback_source`. New evidence is a BgUtils token-generation
-  failure: `Could not get BotGuard challenge`, followed by missing mweb GVS PO token and skipped
-  audio-only formats.
-- Production is still pinned to BgUtils 1.3.1 and Deno 2.3.7.
-- Upstream BgUtils 1.3.2 was released 2026-08-21 specifically to mint WebPO tokens from the
-  homepage challenge + ytcfg and mitigate failures affecting 1.3.1. BgUtils 1.3.2 requires
-  Deno >= 2.4.3 for the script provider.
-- Branch `fix/bgutil-1.3.2` upgrades BgUtils to 1.3.2 and Deno to 2.4.3 and extends CI to
-  validate the pinned versions, runtime permissions, and script `--version` execution.
+- PR #23 deployed the BgUtils server 1.3.2 and Deno 2.4.3, but the Python provider remained
+  pinned to 1.3.1 and acquisition still forced the `mweb` YouTube client.
+- The first production job after PR #23 took about 29.5 minutes and still completed with
+  warnings, so the partial provider update did not restore verified audio-only selection.
+- Branch `fix/cloud-youtube-ingestion` aligns both provider halves at 1.3.2, updates yt-dlp to
+  2026.8.19, lets current yt-dlp select its default YouTube clients, adds bounded network retries,
+  and caps each worker subprocess at 20 minutes by default.
+- Local verification passes: 113 tests passed and 29 integration tests were skipped because
+  their external PostgreSQL/FFmpeg fixtures were unavailable.
 
 ## Cloud v0.1 boundary
 
@@ -37,11 +37,10 @@ the retention window. Source-quality rules remain unchanged.
 
 ## Exact next step
 
-1. Let CI validate `fix/bgutil-1.3.2` and merge its PR to `main`.
-2. Confirm Railway redeploys the worker and proxy routing remains enabled.
+1. Push `fix/cloud-youtube-ingestion`, let CI validate it, and merge its PR to `main`.
+2. Confirm Railway redeploys the web and worker and proxy routing remains enabled.
 3. Retry the same Babehoven exact URL with the Ableton profile.
 4. Inspect `archive.json`: the BotGuard challenge / missing GVS PO-token warnings should be
    gone. Verify whether an audio-only source is selected and whether quality status improves
    from `fallback_source` under the unchanged project policy.
-5. Separately add a bounded yt-dlp subprocess timeout so a stalled network/provider call
-   cannot hold the sequential cloud worker indefinitely.
+5. Confirm the job finishes within the new bounded execution window.

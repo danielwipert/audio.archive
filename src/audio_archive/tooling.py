@@ -66,24 +66,45 @@ def resolve_tool(configured: str, tools_directory: Path) -> str:
 class SubprocessRunner:
     """Runs controlled argv arrays without a shell or interactive standard input."""
 
+    def __init__(self, *, timeout_seconds: float | None = None):
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ValueError("Command timeout must be positive")
+        self.timeout_seconds = timeout_seconds
+
     def run(self, argv: Sequence[str], *, cwd: Path | None = None) -> CommandResult:
         if not argv:
             raise ValueError("Command argv cannot be empty")
         started = utc_now()
-        completed = subprocess.run(
-            [str(part) for part in argv],
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            shell=False,
-            check=False,
-            env={**os.environ, "NO_COLOR": "1"},
-        )
+        command = [str(part) for part in argv]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                shell=False,
+                check=False,
+                env={**os.environ, "NO_COLOR": "1"},
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            timeout = self.timeout_seconds
+            stderr = _timeout_output(exc.stderr)
+            detail = f"Command timed out after {timeout:g} seconds"
+            result = CommandResult(
+                argv=tuple(command),
+                returncode=124,
+                stdout=_timeout_output(exc.stdout),
+                stderr=f"{stderr.rstrip()}\n{detail}".lstrip(),
+                started_at_utc=started,
+                finished_at_utc=utc_now(),
+            )
+            raise ToolExecutionError(result) from exc
         result = CommandResult(
-            argv=tuple(str(part) for part in argv),
+            argv=tuple(command),
             returncode=completed.returncode,
             stdout=completed.stdout,
             stderr=completed.stderr,
@@ -93,6 +114,14 @@ class SubprocessRunner:
         if result.returncode:
             raise ToolExecutionError(result)
         return result
+
+
+def _timeout_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def read_tool_version(runner: CommandRunner, tool: str, *args: str) -> str:

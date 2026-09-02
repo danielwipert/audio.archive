@@ -84,6 +84,9 @@ class SourceResolutionTests(unittest.TestCase):
         self.assertIn("--ignore-config", runner.argv)
         self.assertIn("--flat-playlist", runner.argv)
         self.assertIn("--skip-download", runner.argv)
+        self.assertEqual(runner.argv[runner.argv.index("--socket-timeout") + 1], "30")
+        self.assertEqual(runner.argv[runner.argv.index("--retries") + 1], "3")
+        self.assertEqual(runner.argv[runner.argv.index("--extractor-retries") + 1], "2")
         self.assertTrue(runner.argv[-1].startswith("ytsearch5:"))
 
     def test_ambiguous_search_waits_for_manual_review(self) -> None:
