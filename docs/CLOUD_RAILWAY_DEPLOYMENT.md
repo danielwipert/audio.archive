@@ -79,6 +79,7 @@ Additional variables:
 
 ```text
 AUDIO_ARCHIVE_WORKER_ID=railway-worker-1
+AUDIO_ARCHIVE_SUBPROCESS_TIMEOUT_SECONDS=1200
 AUDIO_ARCHIVE_WORKER_NETWORK_CLASS=cloud_datacenter
 AUDIO_ARCHIVE_SCRATCH_ROOT=/work/jobs
 AUDIO_ARCHIVE_WORKER_POLL_SECONDS=2
@@ -114,8 +115,8 @@ The production Docker image pins/provides:
 - Python 3.11;
 - the project-pinned yt-dlp and BgUtils Python provider;
 - FFmpeg and FFprobe from Debian Bookworm;
-- Deno 2.3.7; and
-- BgUtils server source 1.3.1 with its Deno dependencies installed.
+- Deno 2.4.3; and
+- BgUtils server source 1.3.2 with its Deno dependencies installed.
 
 The BgUtils server is installed under the existing path expected by
 `AcquisitionService`: `tools/bgutil-ytdlp-pot-provider/server`.

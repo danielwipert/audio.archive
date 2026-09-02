@@ -69,8 +69,10 @@ def _wait_for_schema(database: CloudDatabase, *, timeout_seconds: int = 180) -> 
     raise RuntimeError("Cloud database schema was not ready before worker startup timeout") from last_error
 
 
-def _worker_runner() -> CommandRunner:
-    runner: CommandRunner = SubprocessRunner()
+def _worker_runner(settings: CloudSettings) -> CommandRunner:
+    runner: CommandRunner = SubprocessRunner(
+        timeout_seconds=settings.subprocess_timeout_seconds
+    )
     proxy_url = os.getenv("AUDIO_ARCHIVE_YTDLP_PROXY", "").strip()
     if proxy_url:
         LOGGER.info("YouTube proxy routing is enabled for worker yt-dlp calls")
@@ -91,7 +93,7 @@ def _build_worker(settings: CloudSettings) -> tuple[CloudSequentialWorker, Tempo
         database=database,
         settings=settings,
         base_config=load_config(),
-        runner=_worker_runner(),
+        runner=_worker_runner(settings),
         delivery=delivery,
     )
     worker = CloudSequentialWorker(

@@ -19,6 +19,7 @@ class CloudSettings:
     worker_network_class: WorkerNetworkClass = WorkerNetworkClass.UNKNOWN
     retention_hours: int = 24
     signed_url_ttl_seconds: int = 900
+    subprocess_timeout_seconds: int = 1200
 
     def __post_init__(self) -> None:
         if not self.database_url.startswith(("postgresql://", "postgresql+psycopg://")):
@@ -35,6 +36,8 @@ class CloudSettings:
             raise ValueError("AUDIO_ARCHIVE_RETENTION_HOURS must be positive")
         if not 60 <= self.signed_url_ttl_seconds <= 3600:
             raise ValueError("AUDIO_ARCHIVE_SIGNED_URL_TTL_SECONDS must be between 60 and 3600")
+        if self.subprocess_timeout_seconds <= 0:
+            raise ValueError("AUDIO_ARCHIVE_SUBPROCESS_TIMEOUT_SECONDS must be positive")
 
     def __repr__(self) -> str:
         return (
@@ -48,7 +51,8 @@ class CloudSettings:
             f"worker_id={self.worker_id!r}, "
             f"worker_network_class={self.worker_network_class.value!r}, "
             f"retention_hours={self.retention_hours!r}, "
-            f"signed_url_ttl_seconds={self.signed_url_ttl_seconds!r})"
+            f"signed_url_ttl_seconds={self.signed_url_ttl_seconds!r}, "
+            f"subprocess_timeout_seconds={self.subprocess_timeout_seconds!r})"
         )
 
     @classmethod
@@ -67,6 +71,9 @@ class CloudSettings:
             retention_hours=_positive_int("AUDIO_ARCHIVE_RETENTION_HOURS", 24),
             signed_url_ttl_seconds=_positive_int(
                 "AUDIO_ARCHIVE_SIGNED_URL_TTL_SECONDS", 900
+            ),
+            subprocess_timeout_seconds=_positive_int(
+                "AUDIO_ARCHIVE_SUBPROCESS_TIMEOUT_SECONDS", 1200
             ),
         )
 

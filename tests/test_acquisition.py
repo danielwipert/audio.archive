@@ -190,12 +190,18 @@ class AcquisitionTests(unittest.TestCase):
                 for index, value in enumerate(yt_dlp_command)
                 if value == "--extractor-args"
             ]
-            self.assertIn("youtube:player_client=mweb", extractor_args)
+            self.assertFalse(
+                any(value.startswith("youtube:player_client=") for value in extractor_args)
+            )
             provider_arg = next(
                 value for value in extractor_args if value.startswith("youtubepot-bgutilscript:")
             )
             self.assertIn("server_home=", provider_arg)
             self.assertIn("bgutil-ytdlp-pot-provider", provider_arg)
+            self.assertEqual(yt_dlp_command[yt_dlp_command.index("--socket-timeout") + 1], "30")
+            self.assertEqual(yt_dlp_command[yt_dlp_command.index("--retries") + 1], "3")
+            self.assertEqual(yt_dlp_command[yt_dlp_command.index("--fragment-retries") + 1], "3")
+            self.assertEqual(yt_dlp_command[yt_dlp_command.index("--extractor-retries") + 1], "2")
             self.assertEqual(yt_dlp_command[yt_dlp_command.index("--format") + 1], "bestaudio/best")
             self.assertNotIn("--extract-audio", yt_dlp_command)
 

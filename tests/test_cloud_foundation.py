@@ -84,11 +84,13 @@ def test_cloud_settings_defaults_are_spec_defaults(monkeypatch: pytest.MonkeyPat
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("AUDIO_ARCHIVE_RETENTION_HOURS", raising=False)
     monkeypatch.delenv("AUDIO_ARCHIVE_SIGNED_URL_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("AUDIO_ARCHIVE_SUBPROCESS_TIMEOUT_SECONDS", raising=False)
 
     settings = CloudSettings.from_env()
 
     assert settings.retention_hours == 24
     assert settings.signed_url_ttl_seconds == 900
+    assert settings.subprocess_timeout_seconds == 1200
     assert settings.worker_network_class is WorkerNetworkClass.UNKNOWN
     assert settings.scratch_root == Path("/work/jobs")
 
@@ -110,3 +112,8 @@ def test_cloud_settings_require_https_r2_endpoint() -> None:
 def test_signed_url_ttl_is_bounded() -> None:
     with pytest.raises(ValueError, match="between 60 and 3600"):
         _settings(signed_url_ttl_seconds=7200)
+
+
+def test_subprocess_timeout_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        _settings(subprocess_timeout_seconds=0)
