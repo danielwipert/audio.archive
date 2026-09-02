@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from audio_archive.tooling import CommandResult, ToolExecutionError
+
 from audio_archive.cloud.config import CloudSettings
+from audio_archive.cloud.execution import classify_job_error
 from audio_archive.cloud.models import (
     CloudProfile,
     DeliveryState,
@@ -117,3 +120,35 @@ def test_signed_url_ttl_is_bounded() -> None:
 def test_subprocess_timeout_must_be_positive() -> None:
     with pytest.raises(ValueError, match="must be positive"):
         _settings(subprocess_timeout_seconds=0)
+
+
+def _tool_failure(stderr: str) -> ToolExecutionError:
+    return ToolExecutionError(
+        CommandResult(
+            argv=("yt-dlp", "https://youtu.be/example"),
+            returncode=1,
+            stdout="",
+            stderr=stderr,
+            started_at_utc="2026-09-02T23:16:20+00:00",
+            finished_at_utc="2026-09-02T23:16:33+00:00",
+        )
+    )
+
+
+def test_youtube_access_failure_is_classified_by_restriction() -> None:
+    failure = _tool_failure("ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests")
+
+    assert classify_job_error("downloading", failure) == "SourceAccessRateLimited"
+    assert classify_job_error("resolving", failure) == "SourceAccessRateLimited"
+
+
+def test_media_stage_failure_keeps_its_own_class() -> None:
+    # A converting-stage tool failure is never reported as a YouTube access restriction,
+    # even when its output mentions a status code.
+    failure = _tool_failure("ERROR: HTTP Error 403 appears in this unrelated ffmpeg log line")
+
+    assert classify_job_error("converting", failure) == "ToolExecutionError"
+
+
+def test_non_tool_failures_keep_the_exception_name() -> None:
+    assert classify_job_error("downloading", ValueError("bad manifest")) == "ValueError"

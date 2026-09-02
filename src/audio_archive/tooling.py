@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Protocol
 
 
+# The pinned BgUtils PO-token script provider refuses to run below this Deno version.
+MINIMUM_DENO_VERSION = (2, 4, 3)
+
+
 @dataclass(frozen=True)
 class CommandResult:
     argv: tuple[str, ...]

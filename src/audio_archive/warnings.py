@@ -22,6 +22,38 @@ QUALITY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+SOURCE_ACCESS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("SourceAccessRateLimited", re.compile(r"http error 429|too many requests", re.I)),
+    ("SourceAccessBotCheck", re.compile(r"sign in to confirm|confirm you.{0,3}re not a bot", re.I)),
+    ("SourceAccessForbidden", re.compile(r"http error 403|access to this content", re.I)),
+    ("SourceAccessTokenFailure", re.compile(r"po.?token|proof.of.origin|botguard", re.I)),
+    (
+        "SourceUnavailable",
+        re.compile(
+            r"video unavailable|private video|removed by the uploader"
+            r"|not available in your country|geo.?restrict|members.only",
+            re.I,
+        ),
+    ),
+)
+
+
+def classify_source_access_failure(stdout: str, stderr: str) -> str | None:
+    """Name the YouTube access restriction that stopped a tool run, when there is one.
+
+    Patterns are ordered by how the failure should be acted on rather than by how the
+    output reads: a rate-limited egress path is reported ahead of the bot challenge that
+    usually follows it, because the egress path is what a user has to change. Output that
+    describes a conversion or verification problem returns None so it keeps its own class.
+    """
+
+    output = f"{stdout}\n{stderr}"
+    for error_class, pattern in SOURCE_ACCESS_PATTERNS:
+        if pattern.search(output):
+            return error_class
+    return None
+
+
 def _warning_lines(output: str) -> list[str]:
     return [
         line.strip()

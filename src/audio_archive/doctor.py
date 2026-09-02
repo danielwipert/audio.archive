@@ -9,10 +9,7 @@ from importlib import metadata
 from pathlib import Path
 
 from .config import AppConfig
-from .tooling import CommandRunner, read_tool_version, resolve_tool
-
-EXPECTED_YT_DLP = (2026, 7, 4)
-MINIMUM_DENO = (2, 3, 0)
+from .tooling import MINIMUM_DENO_VERSION, CommandRunner, read_tool_version, resolve_tool
 
 
 @dataclass(frozen=True)
@@ -65,19 +62,35 @@ def _present(version: str) -> tuple[bool, str]:
     return ok, "available" if ok else "version unavailable"
 
 
-def _yt_dlp_version(version: str) -> tuple[bool, str]:
-    parsed = _version_tuple(version)
-    if parsed == EXPECTED_YT_DLP:
-        return True, "matches the project pin"
-    expected = ".".join(map(str, EXPECTED_YT_DLP))
-    return False, f"expected pinned version {expected}"
+def _yt_dlp_validator(
+    distribution_version: Callable[[str], str],
+) -> Callable[[str], tuple[bool, str]]:
+    """Compare the resolved executable against the yt-dlp version this project installs.
+
+    The pin lives in `pyproject.toml`, so it is read from the installed distribution
+    rather than repeated here, where it went stale behind a dependency update before.
+    """
+
+    try:
+        expected = _version_tuple(distribution_version("yt-dlp"))
+    except metadata.PackageNotFoundError:
+        expected = None
+
+    def validate(version: str) -> tuple[bool, str]:
+        if expected is None:
+            return False, "the pinned yt-dlp distribution is not installed"
+        if _version_tuple(version) == expected:
+            return True, "matches the project pin"
+        return False, f"expected pinned version {'.'.join(map(str, expected))}"
+
+    return validate
 
 
 def _deno_version(version: str) -> tuple[bool, str]:
     parsed = _version_tuple(version)
-    if parsed and parsed >= MINIMUM_DENO:
+    if parsed and parsed >= MINIMUM_DENO_VERSION:
         return True, "meets the minimum supported version"
-    minimum = ".".join(map(str, MINIMUM_DENO))
+    minimum = ".".join(map(str, MINIMUM_DENO_VERSION))
     return False, f"Deno {minimum} or newer is required"
 
 
@@ -107,7 +120,7 @@ def run_doctor(
                 tools_directory=config.tools_directory,
                 runner=runner,
                 version_args=("--version",),
-                validator=_yt_dlp_version,
+                validator=_yt_dlp_validator(distribution_version),
             ),
             _command_diagnostic(
                 name="Deno",

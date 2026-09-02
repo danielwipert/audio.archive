@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-02
 **Repository:** `danielwipert/audio.archive`  
-**Working branch:** `fix/cloud-youtube-ingestion`
+**Working branch:** `claude/project-review-spec-74pzyw`
 
 ## Session protocol
 
@@ -13,21 +13,23 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 - Cloud v0.1 is deployed on Railway with separate web/worker services, PostgreSQL,
   private R2 temporary delivery, and Cloudflare Access.
-- Worker yt-dlp traffic routes through the worker-only `AUDIO_ARCHIVE_YTDLP_PROXY` secret;
-  the DataImpulse residential proxy resolves the previous Railway 429/403 egress blocker.
-- Proxied exact-URL Ableton jobs complete end to end and produce verified `pcm_f32le` WAVs,
-  checksums, R2 publication, and signed downloads.
-- PR #22 fixed the BgUtils filesystem-permission failure by installing the provider as the
-  final UID 10001 runtime user; that permission error is gone in the latest Railway run.
-- PR #23 deployed the BgUtils server 1.3.2 and Deno 2.4.3, but the Python provider remained
-  pinned to 1.3.1 and acquisition still forced the `mweb` YouTube client.
-- The first production job after PR #23 took about 29.5 minutes and still completed with
-  warnings, so the partial provider update did not restore verified audio-only selection.
-- Branch `fix/cloud-youtube-ingestion` aligns both provider halves at 1.3.2, updates yt-dlp to
-  2026.8.19, lets current yt-dlp select its default YouTube clients, adds bounded network retries,
-  and caps each worker subprocess at 20 minutes by default.
-- Local verification passes: 113 tests passed and 29 integration tests were skipped because
-  their external PostgreSQL/FFmpeg fixtures were unavailable.
+- PR #24 is merged to `main` (752f3d2). It aligned both BgUtils halves at 1.3.2, updated
+  yt-dlp to 2026.8.19, removed the forced `mweb` YouTube client, added bounded network
+  retries, and capped each worker subprocess at 20 minutes.
+- The first production job after PR #24 (exact URL, `ableton` profile) failed at
+  `downloading` 13 seconds in, with HTTP 429 on the webpage fetch plus
+  `Sign in to confirm you're not a bot`. No media transferred. Whether
+  `AUDIO_ARCHIVE_YTDLP_PROXY` survived the redeploy has not been confirmed.
+- Removing the `mweb` pin means yt-dlp now fetches the watch page and `ytcfg`, which is
+  the request that returned 429. That pin was avoiding this surface.
+- A full spec-versus-repo review was completed. Confirmed gaps against `CLOUD_SPEC.md`:
+  source-access failures are not classified (CFR-19); proxy redaction covers argv but not
+  yt-dlp stdout/stderr, which is published in `ingest.log`; cloud CSV import and the
+  §10.2 queue controls are unbuilt; scratch is wiped per claim so no retry reuses it.
+- PR #24 also left `doctor` comparing the yt-dlp executable against a hardcoded 2026.7.4,
+  so the readiness check fails against the new pin and `launch.cmd` refuses to start.
+- Local verification on this branch: 121 tests passed, 32 skipped because external
+  PostgreSQL and FFmpeg fixtures were unavailable.
 
 ## Cloud v0.1 boundary
 
@@ -37,10 +39,16 @@ the retention window. Source-quality rules remain unchanged.
 
 ## Exact next step
 
-1. Push `fix/cloud-youtube-ingestion`, let CI validate it, and merge its PR to `main`.
-2. Confirm Railway redeploys the web and worker and proxy routing remains enabled.
-3. Retry the same Babehoven exact URL with the Ableton profile.
-4. Inspect `archive.json`: the BotGuard challenge / missing GVS PO-token warnings should be
-   gone. Verify whether an audio-only source is selected and whether quality status improves
-   from `fallback_source` under the unchanged project policy.
-5. Confirm the job finishes within the new bounded execution window.
+1. Merge `claude/project-review-spec-74pzyw`: source-access error classes, proxy
+   redaction of tool output, Deno minimum raised to 2.4.3, and the `doctor` yt-dlp pin
+   read from the installed distribution instead of a stale constant (DEC-012).
+2. Check the Railway worker startup log for `YouTube proxy routing is enabled`. If the
+   line is absent, `AUDIO_ARCHIVE_YTDLP_PROXY` is not set on the worker and that alone
+   explains the 429.
+3. If proxy routing is on, check the DataImpulse balance before changing any code.
+4. Retry the same Babehoven exact URL with the `ableton` profile. The job page should now
+   name the failure class (`SourceAccessRateLimited` / `SourceAccessBotCheck`) instead of
+   `ToolExecutionError`.
+5. If datacenter egress still fails with proxy routing confirmed healthy, take the
+   decision `CLOUD_SPEC.md` §9.2 and open decision #9 already anticipate: move acquisition
+   to a residential worker. The job model and `worker_network_class` already support it.

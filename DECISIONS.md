@@ -132,3 +132,22 @@ warning, and disqualification flag is persisted before the job leaves
 enter `needs_review`; a user may approve a recorded candidate, supply a
 replacement YouTube URL, or mark the request `not_found`. Review jobs release
 the sequential-worker claim and do not block later queue work.
+
+## DEC-012 — Toolchain version sources
+
+- **Status:** Accepted
+- **Date:** 2026-09-02
+- **Amends:** DEC-004, DEC-006
+
+The minimum supported Deno version is 2.4.3, raised from the 2.3.0 recorded by
+DEC-006. The pinned BgUtils PO token script provider refuses to run below that
+version, so an older runtime passes the readiness check and then silently loses
+token generation, which degrades acquisition quality status rather than failing.
+The minimum lives in one constant and is enforced by both `doctor` and
+acquisition.
+
+The expected yt-dlp version is read from the installed distribution rather than
+repeated in application code. DEC-004 keeps its meaning: the pin is an explicit
+maintenance decision recorded in `pyproject.toml`. Duplicating it a second time
+allowed the readiness check to reject a correctly pinned toolchain after a
+dependency update, which blocked the Windows launcher.

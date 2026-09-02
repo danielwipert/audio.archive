@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 
 from ..resolver import CandidateScore, ResolutionDecision
+from ..tooling import ToolExecutionError
+from ..warnings import classify_source_access_failure
 from .db import CloudDatabase
 from .models import (
     ACTIVE_PROCESSING_STATES,
@@ -19,6 +21,25 @@ from .models import (
 class ResolutionPersistence:
     state: ProcessingState
     selected_video_id: str | None
+
+
+SOURCE_ACCESS_STAGES = frozenset(
+    {ProcessingState.RESOLVING.value, ProcessingState.DOWNLOADING.value}
+)
+
+
+def classify_job_error(stage: str, error: BaseException) -> str:
+    """Name a failure so a YouTube access restriction is distinguishable from a media fault.
+
+    Only the stages that contact YouTube are examined, so a conversion or verification
+    tool whose output happens to mention a status code keeps its own class.
+    """
+
+    if stage in SOURCE_ACCESS_STAGES and isinstance(error, ToolExecutionError):
+        access_class = classify_source_access_failure(error.result.stdout, error.result.stderr)
+        if access_class:
+            return access_class
+    return type(error).__name__
 
 
 class CloudExecutionRepository:
@@ -371,7 +392,7 @@ class CloudExecutionRepository:
             if ProcessingState.FAILED not in ALLOWED_PROCESSING_TRANSITIONS[old_state]:
                 return False
             summary = str(error)[:4000]
-            error_class = type(error).__name__
+            error_class = classify_job_error(old_state.value, error)
             connection.execute(
                 """
                 UPDATE jobs
