@@ -40,15 +40,23 @@ def make_config(root: Path) -> AppConfig:
     )
 
 
+PINNED_YT_DLP = "2026.8.19"
+
+
+def installed_version(name: str) -> str:
+    return {"yt-dlp": PINNED_YT_DLP, "yt-dlp-ejs": "0.4.0"}[name]
+
+
 class VersionRunner:
-    def __init__(self, *, deno_version: str = "deno 2.4.0"):
+    def __init__(self, *, deno_version: str = "deno 2.4.3", yt_dlp_version: str = "2026.08.19"):
         self.deno_version = deno_version
+        self.yt_dlp_version = yt_dlp_version
 
     def run(self, argv, *, cwd=None) -> CommandResult:
         command = tuple(str(part) for part in argv)
         tool = Path(command[0]).stem.lower()
         versions = {
-            "yt-dlp": "2026.07.04\n",
+            "yt-dlp": f"{self.yt_dlp_version}\n",
             "deno": f"{self.deno_version}\n",
             "ffmpeg": "ffmpeg version 7.1\n",
             "ffprobe": "ffprobe version 7.1\n",
@@ -69,7 +77,7 @@ class DoctorTests(unittest.TestCase):
             report = run_doctor(
                 make_config(Path(directory)),
                 VersionRunner(),
-                distribution_version=lambda _: "0.4.0",
+                distribution_version=installed_version,
             )
 
         self.assertTrue(report.ready)
@@ -79,18 +87,33 @@ class DoctorTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             report = run_doctor(
                 make_config(Path(directory)),
-                VersionRunner(deno_version="deno 2.2.9"),
-                distribution_version=lambda _: "0.4.0",
+                VersionRunner(deno_version="deno 2.4.2"),
+                distribution_version=installed_version,
             )
 
         deno = next(item for item in report.diagnostics if item.name == "Deno")
         self.assertFalse(report.ready)
         self.assertFalse(deno.ok)
-        self.assertIn("2.3.0", deno.message)
+        self.assertIn("2.4.3", deno.message)
+
+    def test_yt_dlp_executable_must_match_the_installed_pin(self) -> None:
+        with TemporaryDirectory() as directory:
+            report = run_doctor(
+                make_config(Path(directory)),
+                VersionRunner(yt_dlp_version="2026.07.04"),
+                distribution_version=installed_version,
+            )
+
+        yt_dlp = next(item for item in report.diagnostics if item.name == "yt-dlp")
+        self.assertFalse(report.ready)
+        self.assertFalse(yt_dlp.ok)
+        self.assertIn(PINNED_YT_DLP, yt_dlp.message)
 
     def test_missing_ejs_components_block_readiness(self) -> None:
-        def missing_distribution(_: str) -> str:
-            raise metadata.PackageNotFoundError
+        def missing_distribution(name: str) -> str:
+            if name == "yt-dlp-ejs":
+                raise metadata.PackageNotFoundError
+            return installed_version(name)
 
         with TemporaryDirectory() as directory:
             report = run_doctor(

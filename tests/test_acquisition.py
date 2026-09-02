@@ -146,7 +146,7 @@ class FakeRunner:
             "yt-dlp": "2026.07.04",
             "ffmpeg": "ffmpeg version 6.1.1",
             "ffprobe": "ffprobe version 6.1.1",
-            "deno": "deno 2.4.0",
+            "deno": "deno 2.4.3",
         }
         return self._result(command, stdout=versions.get(tool, "test") + "\n")
 

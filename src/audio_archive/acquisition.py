@@ -13,6 +13,7 @@ from .config import AppConfig
 from .integrity import verify_sha256sums, write_sha256sums
 from .manifest import SCHEMA_VERSION, write_manifest_atomic
 from .tooling import (
+    MINIMUM_DENO_VERSION,
     CommandResult,
     CommandRunner,
     ToolExecutionError,
@@ -313,8 +314,11 @@ class AcquisitionService:
             "deno": read_tool_version(self.runner, deno, "--version"),
         }
         deno_match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", versions["deno"] or "")
-        if not deno_match or tuple(map(int, deno_match.groups())) < (2, 3, 0):
-            raise ValueError("Deno 2.3.0 or newer is required for full YouTube format access")
+        if not deno_match or tuple(map(int, deno_match.groups())) < MINIMUM_DENO_VERSION:
+            minimum = ".".join(map(str, MINIMUM_DENO_VERSION))
+            raise ValueError(
+                f"Deno {minimum} or newer is required for full YouTube format access"
+            )
         command = (
             yt_dlp,
             "--ignore-config",
