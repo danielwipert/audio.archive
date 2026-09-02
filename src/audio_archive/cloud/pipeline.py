@@ -21,7 +21,7 @@ from ..verify import sha256_file
 from .config import CloudSettings
 from .db import CloudDatabase, LostWorkerClaim
 from .delivery import TemporaryDeliveryService
-from .execution import CloudExecutionRepository
+from .execution import CloudExecutionRepository, classify_job_error
 from .models import CloudProfile, ProcessingState, WorkerClaim
 from .workspace import CloudWorkspace
 
@@ -159,15 +159,15 @@ class CloudJobProcessor:
             raise
         except Exception as exc:
             self._rollback_unpublished(claim.job_id)
+            stage = self._current_stage(claim.job_id)
             try:
-                stage = str(self.database.get_job(claim.job_id)["processing_state"])
                 self.execution.fail_job(job_id=claim.job_id, stage=stage, error=exc)
             finally:
                 if not attempt_closed:
                     self.execution.finish_attempt(
                         attempt_id,
                         result="failed",
-                        error_class=type(exc).__name__,
+                        error_class=classify_job_error(stage, exc),
                         error_summary=str(exc)[:4000],
                     )
                     attempt_closed = True
@@ -388,6 +388,12 @@ class CloudJobProcessor:
             expires_at_utc=expires_at,
         )
         return output_ids
+
+    def _current_stage(self, job_id: int) -> str:
+        try:
+            return str(self.database.get_job(job_id)["processing_state"])
+        except KeyError:
+            return "unknown"
 
     def _rollback_unpublished(self, job_id: int) -> None:
         """Best-effort removal of objects uploaded before publication completed."""
