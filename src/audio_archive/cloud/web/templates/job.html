@@ -50,6 +50,14 @@
 </section>
 {% endif %}
 
+{% if view.job.processing_state in ["pending", "needs_review", "ready", "failed", "interrupted"] and view.job.delivery_state == "not_published" %}
+<section class="panel" style="margin-bottom:20px">
+  <h2>Cancel</h2>
+  <p class="meta">This job has not produced any downloads. Cancelling keeps its history and stops it from running.</p>
+  <form method="post" action="/jobs/{{ view.job.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary" type="submit">Cancel job</button></form>
+</section>
+{% endif %}
+
 {% if view.outputs %}
 <section class="panel" style="margin-bottom:20px">
   <h2>Temporary downloads</h2>
@@ -60,6 +68,13 @@
     {% if view.job.status == "ready_to_download" and not output.deleted %}<a class="button" href="/jobs/{{ view.job.id }}/outputs/{{ output.id }}/download">Download</a>{% elif output.deleted %}<span class="meta">Deleted</span>{% else %}<span class="meta">Not downloadable</span>{% endif %}
   </div>
   {% endfor %}
+  {% if view.job.status == "ready_to_download" %}
+  <form method="post" action="/jobs/{{ view.job.id }}/delete-files" style="margin-top:16px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="meta">Done with these? Deleting now stops the downloads immediately; the objects are removed on the next cleanup pass.</p>
+    <button class="secondary" type="submit">Delete files now</button>
+  </form>
+  {% endif %}
 </section>
 {% elif view.job.status == "files_expired" %}
 <section class="panel" style="margin-bottom:20px"><h2>Downloads expired</h2><p class="meta">Files expired. Reprocessing is required to create new downloads.</p></section>

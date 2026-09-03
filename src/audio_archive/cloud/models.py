@@ -62,6 +62,20 @@ PROFILE_OUTPUT_PRESETS: dict[CloudProfile, frozenset[CloudOutput]] = {
 }
 
 
+CSV_PROFILE_OUTPUTS: dict[str, frozenset[CloudOutput]] = {
+    "ableton": frozenset({CloudOutput.ABLETON}),
+    "archive": frozenset(),
+    "listen": frozenset({CloudOutput.LISTEN}),
+    "complete": frozenset({CloudOutput.ABLETON, CloudOutput.LISTEN}),
+}
+"""The v0.3 CSV profile column, expressed as cloud outputs.
+
+The CSV schema is shared with the local application, so a row keeps naming a v0.3
+profile and the cloud translates it. `archive` asks for the source master alone,
+which every job delivers anyway.
+"""
+
+
 def profile_for_outputs(outputs: frozenset[CloudOutput]) -> CloudProfile:
     """Summarize a chosen set as the closest preset, for provenance and display."""
 

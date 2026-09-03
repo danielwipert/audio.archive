@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from dataclasses import replace
 import os
 from pathlib import Path
 import threading
-from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
@@ -15,7 +13,7 @@ from starlette.requests import Request
 
 from .config import AppConfig, load_config
 from .db import ArchiveDatabase
-from .inputs import CsvPreview, attach_import_id, normalize_request, preview_csv
+from .inputs import CsvPreview, CsvPreviewStore, attach_import_id, normalize_request
 from .models import JobState
 from .source_resolution import (
     approve_candidate,
@@ -96,45 +94,6 @@ class QueueController:
             finally:
                 with self._lock:
                     self._active = False
-
-
-class CsvPreviewStore:
-    def __init__(self, root: Path, max_bytes: int):
-        self.root = root
-        self.max_bytes = max_bytes
-        self._lock = threading.Lock()
-        self._files: dict[str, tuple[Path, str]] = {}
-
-    def create(self, filename: str, content: bytes) -> tuple[str, CsvPreview]:
-        original_name = Path(filename or "import.csv").name
-        if Path(original_name).suffix.casefold() != ".csv":
-            raise ValueError("Only CSV files are accepted")
-        if len(content) > self.max_bytes:
-            raise ValueError(f"CSV exceeds the configured {self.max_bytes}-byte limit")
-        token = uuid4().hex
-        self.root.mkdir(parents=True, exist_ok=True)
-        path = self.root / f"{token}.csv"
-        path.write_bytes(content)
-        try:
-            parsed = preview_csv(path, max_bytes=self.max_bytes)
-        except Exception:
-            path.unlink(missing_ok=True)
-            raise
-        preview = replace(parsed, filename=original_name)
-        with self._lock:
-            self._files[token] = (path, original_name)
-        return token, preview
-
-    def consume(self, token: str) -> CsvPreview:
-        with self._lock:
-            stored = self._files.pop(token, None)
-        if stored is None:
-            raise KeyError("CSV preview is no longer available")
-        path, original_name = stored
-        try:
-            return replace(preview_csv(path, max_bytes=self.max_bytes), filename=original_name)
-        finally:
-            path.unlink(missing_ok=True)
 
 
 def _preview_payload(token: str, preview: CsvPreview) -> dict[str, object]:

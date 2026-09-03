@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Audio Archive · Import {{ preview.filename }}{% endblock %}
+{% block content %}
+<p class="meta"><a href="/">← Queue</a> · CSV import</p>
+<section style="margin-bottom:24px">
+  <h1>{{ preview.filename }}</h1>
+  <p class="lede">{{ preview.accepted|length }} row{% if preview.accepted|length != 1 %}s{% endif %} ready to queue{% if preview.rejected %}, {{ preview.rejected|length }} rejected{% endif %}. Nothing is queued until you confirm.</p>
+  <p class="meta mono">SHA-256 {{ preview.file_sha256 }}</p>
+</section>
+
+{% if preview.accepted %}
+<section class="panel" style="margin-bottom:20px">
+  <h2>Will be queued</h2>
+  <table>
+    <thead><tr><th>Row</th><th>Request</th><th>Source</th><th>Files</th></tr></thead>
+    <tbody>
+      {% for row in preview.accepted %}
+      <tr>
+        <td class="mono">{{ row.row }}</td>
+        <td>{{ row.artist or "" }}{% if row.artist and row.title %} — {% endif %}{{ row.title or "" }}{% if row.version %}<div class="meta">{{ row.version }}</div>{% endif %}</td>
+        <td class="meta">{{ "exact URL" if row.url else "resolver search" }}</td>
+        <td class="meta">{{ row.files|join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/csv/import/{{ token }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="actions"><button type="submit">Queue {{ preview.accepted|length }} job{% if preview.accepted|length != 1 %}s{% endif %}</button><a class="button secondary" href="/">Discard</a></div>
+  </form>
+</section>
+{% else %}
+<section class="panel" style="margin-bottom:20px"><h2>Nothing to queue</h2><p class="meta">No row in this file passed validation.</p><div class="actions"><a class="button secondary" href="/">Back to queue</a></div></section>
+{% endif %}
+
+{% if preview.rejected %}
+<section class="panel" style="margin-bottom:20px;border-left:4px solid var(--bad)">
+  <h2>Rejected rows</h2>
+  <p class="meta">These rows are skipped. The rest still queue.</p>
+  <table>
+    <thead><tr><th>Row</th><th>Reason</th></tr></thead>
+    <tbody>{% for row in preview.rejected %}<tr><td class="mono">{{ row.row }}</td><td>{{ row.message }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if preview.duplicate_rows %}
+<section class="panel"><h2>Duplicate rows</h2><p class="meta">Rows {{ preview.duplicate_rows|join(', ') }} repeat an earlier row in this file and are collapsed into one job.</p></section>
+{% endif %}
+{% endblock %}

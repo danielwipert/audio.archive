@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import tempfile
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
+from ..inputs import CsvPreview, CsvPreviewStore
 from .auth import (
     AccessIdentity,
     AccessVerifier,
@@ -21,6 +23,7 @@ from .auth import (
 from .db import CloudDatabase
 from .delivery import DeliveryRepository, DeliveryUnavailable, TemporaryDeliveryService
 from .models import (
+    CSV_PROFILE_OUTPUTS,
     CloudJobRequest,
     CloudOutput,
     CloudProfile,
@@ -93,12 +96,17 @@ def create_cloud_app(
     dependencies: WebDependencies | None = None,
     *,
     rate_limiter: IdentityRateLimiter | None = None,
+    csv_staging_root: Path | None = None,
 ) -> FastAPI:
     deps = dependencies or build_web_dependencies()
     database = deps.database
     repository = CloudWebRepository(database)
     csrf = CsrfSigner(deps.settings.csrf_secret)
     limiter = rate_limiter or IdentityRateLimiter()
+    previews = CsvPreviewStore(
+        csv_staging_root or Path(tempfile.gettempdir()) / "audio-archive-csv",
+        deps.settings.max_csv_bytes,
+    )
     templates = Jinja2Templates(
         directory=str(Path(__file__).resolve().parent / "web" / "templates")
     )
@@ -149,6 +157,7 @@ def create_cloud_app(
                 "csrf_token": csrf.issue(identity),
                 "jobs": jobs,
                 "counts": repository.summarize_counts(),
+                "paused": database.queue_paused(),
             },
         )
 
@@ -191,6 +200,72 @@ def create_cloud_app(
         except (PermissionError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+
+    @app.post("/queue/{action}")
+    async def control_queue(request: Request, action: str, csrf_token: str = Form(...)):
+        _verify_csrf(csrf, csrf_token, _identity(request))
+        if action not in {"pause", "resume"}:
+            raise HTTPException(status_code=404, detail="Unknown queue action")
+        # Pausing stops the next claim; a job already running is never interrupted.
+        database.set_queue_paused(action == "pause")
+        return RedirectResponse(url="/", status_code=303)
+
+    @app.post("/csv/preview", response_class=HTMLResponse)
+    async def preview_csv_upload(
+        request: Request,
+        csrf_token: str = Form(...),
+        file: UploadFile = File(...),
+    ):
+        identity = _identity(request)
+        _verify_csrf(csrf, csrf_token, identity)
+        content = await file.read(deps.settings.max_csv_bytes + 1)
+        try:
+            token, preview = previews.create(file.filename or "import.csv", content)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return templates.TemplateResponse(
+            request=request,
+            name="csv.html",
+            context={
+                "identity": identity,
+                "csrf_token": csrf.issue(identity),
+                "token": token,
+                "preview": _preview_payload(preview),
+            },
+        )
+
+    @app.post("/csv/import/{token}")
+    async def import_csv(request: Request, token: str, csrf_token: str = Form(...)):
+        identity = _identity(request)
+        _verify_csrf(csrf, csrf_token, identity)
+        try:
+            limiter.check(identity)
+            preview = previews.consume(token)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (PermissionError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        import_id = database.create_csv_import(
+            filename=preview.filename,
+            file_sha256=preview.file_sha256,
+            accepted_rows=len(preview.accepted),
+            rejected_rows=len(preview.rejected),
+            duplicate_rows=len(preview.duplicate_rows),
+        )
+        for row in preview.accepted:
+            database.create_job(
+                CloudJobRequest(
+                    artist=row.artist,
+                    title=row.title,
+                    version=row.version,
+                    url=row.url,
+                    origin="csv",
+                    import_id=import_id,
+                    import_row=row.import_row,
+                    outputs=CSV_PROFILE_OUTPUTS[row.profile],
+                )
+            )
+        return RedirectResponse(url="/", status_code=303)
 
     @app.get("/jobs/{job_id}", response_class=HTMLResponse)
     async def job_detail(request: Request, job_id: int):
@@ -256,6 +331,28 @@ def create_cloud_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
+    @app.post("/jobs/{job_id}/cancel")
+    async def cancel_job(request: Request, job_id: int, csrf_token: str = Form(...)):
+        _verify_csrf(csrf, csrf_token, _identity(request))
+        try:
+            repository.cancel_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+
+    @app.post("/jobs/{job_id}/delete-files")
+    async def delete_files(request: Request, job_id: int, csrf_token: str = Form(...)):
+        _verify_csrf(csrf, csrf_token, _identity(request))
+        try:
+            deps.delivery.repository.request_early_deletion(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+
     @app.post("/jobs/{job_id}/retry")
     async def retry_job(
         request: Request,
@@ -305,6 +402,30 @@ def _verify_csrf(signer: CsrfSigner, token: str, identity: AccessIdentity) -> No
         signer.verify(token, identity)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail="Invalid or expired form token") from exc
+
+
+def _preview_payload(preview: CsvPreview) -> dict[str, object]:
+    return {
+        "filename": preview.filename,
+        "file_sha256": preview.file_sha256,
+        "accepted": [
+            {
+                "row": row.import_row,
+                "artist": row.artist,
+                "title": row.title,
+                "version": row.version,
+                "url": row.url,
+                "files": sorted(output.value for output in CSV_PROFILE_OUTPUTS[row.profile])
+                or ["source only"],
+            }
+            for row in preview.accepted
+        ],
+        "rejected": [
+            {"row": rejected.row_number, "message": rejected.message}
+            for rejected in preview.rejected
+        ],
+        "duplicate_rows": list(preview.duplicate_rows),
+    }
 
 
 def _optional(value: str | None) -> str | None:

@@ -14,6 +14,7 @@ from audio_archive.listening import ListeningAsset, ListeningResult
 from audio_archive.acquisition import AcquisitionRequest, AcquisitionResult
 from audio_archive.cloud.config import CloudSettings
 from audio_archive.cloud.db import CloudDatabase
+from audio_archive.cloud.runtime import expected_migration_versions
 from audio_archive.cloud.delivery import DeliveryRepository, TemporaryDeliveryService
 from audio_archive.cloud.execution import CloudExecutionRepository
 from audio_archive.cloud.models import (
@@ -359,7 +360,9 @@ def cloud_db() -> CloudDatabase:
         connection.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1, 2, 3]
+    assert set(database.apply_migrations(root / "migrations")) == expected_migration_versions(
+        root / "migrations"
+    )
     return database
 
 

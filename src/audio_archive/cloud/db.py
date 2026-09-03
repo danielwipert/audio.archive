@@ -129,6 +129,50 @@ class CloudDatabase:
             raise KeyError(f"Job {job_id} does not exist")
         return dict(row)
 
+    def queue_paused(self) -> bool:
+        with self.connect() as connection:
+            row = connection.execute("SELECT paused FROM queue_control").fetchone()
+        return bool(row and row["paused"])
+
+    def set_queue_paused(self, paused: bool) -> bool:
+        """Pause or resume claiming. Work already in progress is never interrupted."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                UPDATE queue_control
+                SET paused = %s,
+                    paused_at_utc = CASE WHEN %s THEN NOW() ELSE NULL END,
+                    updated_at_utc = NOW()
+                RETURNING paused
+                """,
+                (paused, paused),
+            ).fetchone()
+            assert row is not None
+            return bool(row["paused"])
+
+    def create_csv_import(
+        self,
+        *,
+        filename: str,
+        file_sha256: str,
+        accepted_rows: int,
+        rejected_rows: int,
+        duplicate_rows: int,
+    ) -> int:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                INSERT INTO csv_imports (
+                    filename, file_sha256, accepted_rows, rejected_rows, duplicate_rows
+                ) VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (filename, file_sha256, accepted_rows, rejected_rows, duplicate_rows),
+            ).fetchone()
+            assert row is not None
+            return int(row["id"])
+
     def job_may_run_again(self, job_id: int) -> bool:
         """True while a job could still be processed, so its scratch is worth keeping."""
 
@@ -152,6 +196,9 @@ class CloudDatabase:
             raise ValueError("lease_seconds must be positive")
 
         with self.connect() as connection:
+            paused = connection.execute("SELECT paused FROM queue_control").fetchone()
+            if paused and paused["paused"]:
+                return None
             while True:
                 job = connection.execute(
                     """
