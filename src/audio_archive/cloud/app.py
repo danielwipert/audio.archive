@@ -67,6 +67,8 @@ WARNING_CATEGORY_LABELS = {
     "format": "format availability",
     "region": "region restriction",
     "throttling": "rate limiting",
+    "transport": "network transport",
+    "extraction": "page extraction",
     "other": "other",
 }
 
