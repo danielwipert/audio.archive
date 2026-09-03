@@ -10,6 +10,7 @@ import psycopg
 import pytest
 
 from audio_archive.ableton import AbletonAsset, AbletonResult
+from audio_archive.listening import ListeningAsset, ListeningResult
 from audio_archive.acquisition import AcquisitionRequest, AcquisitionResult
 from audio_archive.cloud.config import CloudSettings
 from audio_archive.cloud.db import CloudDatabase
@@ -18,6 +19,7 @@ from audio_archive.cloud.execution import CloudExecutionRepository
 from audio_archive.cloud.models import (
     AccessRetryPolicy,
     CloudJobRequest,
+    CloudOutput,
     CloudProfile,
     ProcessingState,
     WorkerNetworkClass,
@@ -192,6 +194,98 @@ class FakeAbletonService:
         )
 
 
+class _FakeDerivativeService:
+    """Write one recorded derivative the way the real services do, without FFmpeg."""
+
+    relative_template: str
+    role: str
+
+    def __init__(self, config: AppConfig, runner: object):
+        self.config = config
+
+    def _write(self, item_directory: Path, payload: bytes) -> tuple[str, Path, str, str]:
+        manifest_path = item_directory / "metadata" / "archive.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        archive_id = str(manifest["archive_id"])
+        video_id = archive_id.partition(":")[2]
+        relative = self.relative_template.format(video_id=video_id)
+        output = item_directory / relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(payload)
+        digest = sha256_file(output)
+        manifest["derivatives"] = list(manifest.get("derivatives") or []) + [
+            {
+                "role": self.role,
+                "path": relative,
+                "source_sha256": manifest["source_master"]["sha256"],
+                "sha256": digest,
+            }
+        ]
+        write_manifest_atomic(manifest_path, manifest)
+        write_sha256sums(
+            item_directory,
+            list(
+                dict.fromkeys(
+                    listed_checksum_paths(item_directory)
+                    + [Path(relative), Path("metadata/archive.json")]
+                )
+            ),
+        )
+        return archive_id, output, digest, relative
+
+
+class FakeWav24Service(_FakeDerivativeService):
+    relative_template = "derivatives/wav24/{video_id}.wav"
+    role = "wav24"
+
+    def create(self, item_directory: Path, *, job_id: int) -> AbletonResult:
+        archive_id, output, digest, relative = self._write(item_directory, b"fixture-24-bit-wav")
+        return AbletonResult(
+            archive_id=archive_id,
+            item_directory=item_directory,
+            assets=(
+                AbletonAsset(
+                    relative_path=relative,
+                    path=output,
+                    sha256=digest,
+                    sample_rate_hz=48000,
+                    channels=2,
+                    sample_count=48000,
+                    start_sample=0,
+                    end_sample=48000,
+                    segment_index=None,
+                    role="wav24",
+                    audio_format="pcm_s24le",
+                ),
+            ),
+            segmented=False,
+            reused_existing=False,
+        )
+
+
+class FakeListeningService(_FakeDerivativeService):
+    relative_template = "derivatives/listen/{video_id}.mp3"
+    role = "listening"
+
+    def create(self, item_directory: Path, *, job_id: int) -> ListeningResult:
+        archive_id, output, digest, relative = self._write(item_directory, b"fixture-mp3")
+        return ListeningResult(
+            archive_id=archive_id,
+            item_directory=item_directory,
+            asset=ListeningAsset(
+                relative_path=relative,
+                path=output,
+                sha256=digest,
+                sample_rate_hz=48000,
+                channels=2,
+                bitrate_bps=245000,
+                title="Fixture title",
+                artist="Fixture artist",
+            ),
+            reused_existing=False,
+        )
+
+
 class FakeDeliveryStorage:
     def __init__(self, *, fail_after: int | None = None):
         self.fail_after = fail_after
@@ -250,7 +344,7 @@ def cloud_db() -> CloudDatabase:
         connection.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1, 2]
+    assert database.apply_migrations(root / "migrations") == [1, 2, 3]
     return database
 
 
@@ -314,6 +408,8 @@ def _processor(
         delivery=delivery,
         acquisition_factory=FakeAcquisitionService,  # type: ignore[arg-type]
         ableton_factory=FakeAbletonService,  # type: ignore[arg-type]
+        wav24_factory=FakeWav24Service,  # type: ignore[arg-type]
+        listening_factory=FakeListeningService,  # type: ignore[arg-type]
     )
 
 
@@ -322,9 +418,10 @@ def _process_exact_url(
     cloud_settings: CloudSettings,
     processor: CloudJobProcessor,
     profile: CloudProfile,
+    outputs: frozenset[CloudOutput] | None = None,
 ):
     job_id = cloud_db.create_job(
-        CloudJobRequest(url=VIDEO_URL, profile=profile, origin="url")
+        CloudJobRequest(url=VIDEO_URL, profile=profile, origin="url", outputs=outputs)
     )
     claim = cloud_db.claim_next_job(worker_id=cloud_settings.worker_id)
     assert claim is not None and claim.job_id == job_id
@@ -701,3 +798,101 @@ def test_an_unavailable_source_is_never_requeued_automatically(cloud_db: CloudDa
     assert outcome.error_class == "SourceUnavailable"
     assert outcome.retry_at_utc is None
     assert cloud_db.get_job(job_id)["processing_state"] == ProcessingState.FAILED.value
+
+
+def test_every_chosen_format_is_built_once_and_published(
+    cloud_db: CloudDatabase,
+    cloud_settings: CloudSettings,
+    base_config: AppConfig,
+) -> None:
+    storage = FakeDeliveryStorage()
+    processor = _processor(cloud_db, cloud_settings, base_config, storage)
+
+    job_id, result = _process_exact_url(
+        cloud_db,
+        cloud_settings,
+        processor,
+        CloudProfile.ABLETON,
+        outputs=frozenset({CloudOutput.ABLETON, CloudOutput.WAV24, CloudOutput.LISTEN}),
+    )
+
+    assert result.state is ProcessingState.COMPLETED
+    with cloud_db.connect() as connection:
+        rows = connection.execute(
+            "SELECT role, filename, media_properties_json FROM outputs WHERE job_id = %s",
+            (job_id,),
+        ).fetchall()
+    by_role: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        by_role.setdefault(str(row["role"]), []).append(dict(row))
+
+    # The source master is always delivered; each chosen format is delivered beside it.
+    assert {"source", "ableton", "wav24", "listen"} <= set(by_role)
+    assert by_role["ableton"][0]["media_properties_json"]["audio_format"] == "pcm_f32le"
+    assert by_role["wav24"][0]["media_properties_json"]["audio_format"] == "pcm_s24le"
+    assert by_role["listen"][0]["media_properties_json"]["audio_format"] == "mp3"
+    assert by_role["wav24"][0]["filename"].endswith(".wav")
+    assert by_role["listen"][0]["filename"].endswith(".mp3")
+
+    # One conversion stage covers the whole set rather than one pass per format.
+    with cloud_db.connect() as connection:
+        events = connection.execute(
+            """
+            SELECT message FROM job_events
+            WHERE job_id = %s AND to_processing_state = 'converting'
+            """,
+            (job_id,),
+        ).fetchall()
+    assert len(events) == 1
+    assert "Ableton 32-bit float WAV, 24-bit WAV, listening MP3" in str(events[0]["message"])
+
+
+def test_unchosen_formats_are_never_built(
+    cloud_db: CloudDatabase,
+    cloud_settings: CloudSettings,
+    base_config: AppConfig,
+) -> None:
+    storage = FakeDeliveryStorage()
+    processor = _processor(cloud_db, cloud_settings, base_config, storage)
+
+    job_id, _ = _process_exact_url(
+        cloud_db,
+        cloud_settings,
+        processor,
+        CloudProfile.ABLETON,
+        outputs=frozenset({CloudOutput.LISTEN}),
+    )
+
+    with cloud_db.connect() as connection:
+        roles = {
+            str(row["role"])
+            for row in connection.execute(
+                "SELECT DISTINCT role FROM outputs WHERE job_id = %s", (job_id,)
+            ).fetchall()
+        }
+    assert roles == {"source", "listen"}
+
+
+def test_the_manifest_records_the_exact_set_that_was_requested(
+    cloud_db: CloudDatabase,
+    cloud_settings: CloudSettings,
+    base_config: AppConfig,
+) -> None:
+    storage = FakeDeliveryStorage()
+    processor = _processor(cloud_db, cloud_settings, base_config, storage)
+
+    job_id, _ = _process_exact_url(
+        cloud_db,
+        cloud_settings,
+        processor,
+        CloudProfile.ABLETON,
+        outputs=frozenset({CloudOutput.WAV24, CloudOutput.LISTEN}),
+    )
+
+    with cloud_db.connect() as connection:
+        row = connection.execute(
+            "SELECT object_key FROM outputs WHERE job_id = %s AND filename = 'archive.json'",
+            (job_id,),
+        ).fetchone()
+    manifest = json.loads(storage.objects[str(row["object_key"])].decode("utf-8"))
+    assert manifest["request"]["cloud_outputs"] == ["listen", "wav24"]

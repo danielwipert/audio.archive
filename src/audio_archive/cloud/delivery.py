@@ -396,7 +396,7 @@ def _validate_role(object_key: str, published: PublishedObject) -> str:
     if len(parts) < 4 or parts[0] != "delivery":
         raise ValueError("Published object key is outside the delivery namespace")
     role = parts[2]
-    if role not in {"source", "ableton", "package"}:
+    if role not in {"source", "ableton", "wav24", "listen", "package"}:
         raise ValueError(f"Unsupported delivery role: {role}")
     if not object_key.endswith(published.sha256 + Path(object_key).suffix):
         raise ValueError("Published object key does not match the output digest")

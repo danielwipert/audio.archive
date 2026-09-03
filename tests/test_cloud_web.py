@@ -63,7 +63,7 @@ def cloud_database() -> CloudDatabase:
         connection.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1, 2]
+    assert database.apply_migrations(root / "migrations") == [1, 2, 3]
     return database
 
 

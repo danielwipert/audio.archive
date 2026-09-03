@@ -74,12 +74,12 @@ class CloudDatabase:
                 INSERT INTO jobs (
                     processing_state, delivery_state, origin,
                     requested_artist, requested_title, requested_version, requested_url,
-                    profile, import_id, import_row,
+                    profile, requested_outputs, import_id, import_row,
                     source_extractor, source_id, source_url, resolution_method
                 ) VALUES (
                     %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s,
+                    %s, %s, %s, %s,
                     %s, %s, %s, %s
                 )
                 RETURNING id
@@ -92,7 +92,8 @@ class CloudDatabase:
                     request.title,
                     request.version,
                     request.url,
-                    request.profile.value,
+                    request.resolved_profile().value,
+                    sorted(output.value for output in request.resolved_outputs()),
                     request.import_id,
                     request.import_row,
                     "youtube" if pinned_source else None,
