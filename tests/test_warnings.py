@@ -60,5 +60,38 @@ class SourceAccessFailureTests(unittest.TestCase):
         )
 
 
+class TransportAndExtractionTests(unittest.TestCase):
+    def test_a_truncated_or_non_tls_response_is_named_as_transport(self) -> None:
+        """Job 10's warnings, verbatim. They were all landing in "other", which told
+        the reader nothing about a proxy returning corrupt responses."""
+
+        warnings = classify_warnings(
+            "",
+            "[download] Got error: [SSL: WRONG_VERSION_NUMBER] wrong version number "
+            "(_ssl.c:2590). Retrying (1/3)...\n"
+            "WARNING: [youtube] unable to extract yt initial data\n"
+            "WARNING: [youtube] Incomplete data received in embedded initial data; "
+            "re-fetching using API.",
+        )
+
+        # One TLS-level failure, then the two messages describing the truncated page
+        # and the fallback yt-dlp used to recover from it.
+        self.assertEqual(
+            [item.category for item in warnings],
+            ["transport", "extraction", "extraction"],
+        )
+
+    def test_a_token_failure_still_outranks_the_transport_it_reports(self) -> None:
+        # Job 9's PO token error also mentions a transport failure; the token is the
+        # condition worth naming, so its pattern is checked first.
+        warnings = classify_warnings(
+            "",
+            'WARNING: [youtube] [pot] Error fetching PO Token from "bgutil" provider: '
+            "connection reset",
+        )
+
+        self.assertEqual(warnings[0].category, "po_token")
+
+
 if __name__ == "__main__":
     unittest.main()

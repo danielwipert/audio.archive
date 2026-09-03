@@ -19,6 +19,21 @@ QUALITY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("format", re.compile(r"requested format|format.+unavailable|missing formats?", re.I)),
     ("region", re.compile(r"geo.?restrict|not available in your country|region", re.I)),
     ("throttling", re.compile(r"throttl|rate.?limit", re.I)),
+    (
+        "transport",
+        re.compile(
+            r"wrong version number|\bssl\b|connection reset|connection aborted"
+            r"|tunnel connection failed|timed out|read timeout",
+            re.I,
+        ),
+    ),
+    (
+        "extraction",
+        re.compile(
+            r"unable to extract|incomplete data|re.?fetching using api|falling back",
+            re.I,
+        ),
+    ),
 )
 
 

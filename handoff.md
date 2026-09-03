@@ -39,6 +39,8 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 - PR #32 fixed the one thing that broke first: `wav24` was missing from the storage
   layer's delivery-role list, so a job failed at publishing after its audio had already
   been acquired, converted and verified. The role list is derived from one place now.
+- The BgUtils HTTP token server (PR #34) is deployed and working: jobs after it show no
+  PO token, BotGuard or script-timeout warnings at all, where job 9 showed all three.
 
 ## Cloud v0.1 boundary
 
@@ -51,9 +53,8 @@ the retention window. Source-quality rules remain unchanged.
 Cloud v0.1 works end to end. What remains is proving the paths that have never run in
 production, in rising order of cost:
 
-1. Run one job for each untried output: the MP3 and the archive package. Both were in
-   the same delivery-role gap that stopped `wav24`, and both are fixed and tested, but
-   neither has run in the cloud. The Ableton WAV has, and so has the 24-bit WAV.
+1. Run one archive-package job. It is the last output never run in the cloud; the
+   Ableton WAV, the 24-bit WAV and the MP3 have all now produced downloadable files.
 2. Run one CSV import, which has never run in production either.
 3. Run one long-form item past the 1.8 GiB threshold, to exercise segmentation in the
    cloud. It is proven by local FFmpeg tests and by nothing else.
@@ -64,8 +65,14 @@ production, in rising order of cost:
 
 - Windows/Ableton acceptance and one authorized live end-to-end acquisition still gate
   the permanent archive under DEC-005.
-- Long-form segmentation, MP3, the archive package and CSV import are each proven by
-  tests and unproven in production.
+- Long-form segmentation, the archive package and CSV import are each proven by tests
+  and unproven in production.
+- The proxy intermittently returns truncated or non-TLS responses: jobs 9 and 10 show
+  `[SSL: WRONG_VERSION_NUMBER]` and `Incomplete data received in embedded initial data`.
+  yt-dlp retries and falls back to the API, so jobs succeed, but a page-derived format
+  list may be incomplete and the status is then `best_available_with_warnings`. The
+  exact-URL job 8, which fetches one page, came back clean. This is a proxy-side matter,
+  not a code one; yt-dlp is already on the newest release (2026.8.19).
 - An abandoned CSV preview leaves a staged file until the web container recycles.
 - The stray branch `claude/fix-wav24-delivery-role` on GitHub duplicates a commit that
   is already in `main`; delete it from the branches page.
