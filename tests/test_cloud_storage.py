@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from botocore.exceptions import ClientError
 
+from audio_archive.cloud.models import DELIVERY_ROLES, CloudOutput
 from audio_archive.cloud.storage import (
     R2DeliveryStorage,
     object_key_for,
@@ -227,3 +228,25 @@ def test_object_exists_distinguishes_missing_object() -> None:
 def test_download_filename_rejects_path_or_control_input(filename: str) -> None:
     with pytest.raises(ValueError):
         validate_download_filename(filename)
+
+
+def test_every_deliverable_role_can_be_published() -> None:
+    """A role the worker can produce must be a role the storage layer accepts.
+
+    These were separate lists, so publishing a 24-bit WAV failed after the audio had
+    been acquired, converted and verified.
+    """
+
+    for role in sorted(DELIVERY_ROLES):
+        key = object_key_for(job_id=7, role=role, sha256="a" * 64, suffix=".wav")
+        assert key == f"delivery/7/{role}/{'a' * 64}.wav"
+
+
+def test_every_output_a_job_can_request_is_a_deliverable_role() -> None:
+    assert {output.value for output in CloudOutput} <= DELIVERY_ROLES
+    assert "source" in DELIVERY_ROLES
+
+
+def test_an_unknown_role_is_still_refused() -> None:
+    with pytest.raises(ValueError, match="Unsupported delivery role"):
+        object_key_for(job_id=7, role="flac", sha256="a" * 64)
