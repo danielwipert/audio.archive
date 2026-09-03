@@ -9,6 +9,7 @@ from audio_archive.tooling import CommandResult, ToolExecutionError
 from audio_archive.cloud.config import CloudSettings
 from audio_archive.cloud.execution import classify_job_error
 from audio_archive.cloud.models import (
+    AccessRetryPolicy,
     CloudProfile,
     DeliveryState,
     ProcessingState,
@@ -152,3 +153,37 @@ def test_media_stage_failure_keeps_its_own_class() -> None:
 
 def test_non_tool_failures_keep_the_exception_name() -> None:
     assert classify_job_error("downloading", ValueError("bad manifest")) == "ValueError"
+
+
+def test_access_retry_delay_grows_and_is_capped() -> None:
+    policy = AccessRetryPolicy(limit=4, base_seconds=300, maximum_seconds=1200)
+
+    assert [policy.delay_seconds(attempt) for attempt in (1, 2, 3, 4)] == [300, 600, 1200, 1200]
+
+
+def test_access_retry_permits_only_transient_classes_within_the_limit() -> None:
+    policy = AccessRetryPolicy(limit=2)
+
+    assert policy.permits(error_class="SourceAccessRateLimited", attempts_used=0)
+    assert policy.permits(error_class="SourceAccessBotCheck", attempts_used=1)
+    # The budget is spent.
+    assert not policy.permits(error_class="SourceAccessRateLimited", attempts_used=2)
+    # A removed or private video does not become available by waiting.
+    assert not policy.permits(error_class="SourceUnavailable", attempts_used=0)
+    # A media fault is not an access failure.
+    assert not policy.permits(error_class="ToolExecutionError", attempts_used=0)
+
+
+def test_disabled_policy_never_permits_a_retry() -> None:
+    assert not AccessRetryPolicy(limit=0).permits(
+        error_class="SourceAccessRateLimited", attempts_used=0
+    )
+
+
+def test_expected_migration_versions_tracks_the_shipped_files() -> None:
+    from audio_archive.cloud.runtime import expected_migration_versions
+
+    root = Path(__file__).resolve().parents[1]
+    versions = expected_migration_versions(root / "migrations")
+
+    assert versions == {1, 2}

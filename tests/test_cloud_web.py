@@ -63,7 +63,7 @@ def cloud_database() -> CloudDatabase:
         connection.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1]
+    assert database.apply_migrations(root / "migrations") == [1, 2]
     return database
 
 
@@ -284,6 +284,30 @@ def test_retry_clears_failure_and_requeues_pinned_source(cloud_database: CloudDa
     job = cloud_database.get_job(job_id)
     assert job["retry_count"] == 1
     assert job["error_summary"] is None
+
+
+def test_manual_retry_clears_the_automatic_backoff(cloud_database: CloudDatabase) -> None:
+    job_id = cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", profile=CloudProfile.SOURCE, origin="url")
+    )
+    cloud_database.transition_processing(job_id, ProcessingState.FAILED)
+    with cloud_database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET access_retry_count = 3,
+                retry_not_before_utc = NOW() + INTERVAL '20 minutes'
+            WHERE id = %s
+            """,
+            (job_id,),
+        )
+
+    CloudWebRepository(cloud_database).retry_job(job_id)
+
+    job = cloud_database.get_job(job_id)
+    assert job["retry_not_before_utc"] is None
+    assert job["access_retry_count"] == 0
+    assert cloud_database.claim_next_job(worker_id="worker-1") is not None
 
 
 def test_csrf_is_bound_to_identity() -> None:

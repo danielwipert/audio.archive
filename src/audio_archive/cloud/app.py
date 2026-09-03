@@ -307,6 +307,8 @@ def _job_payload(row: dict[str, object]) -> dict[str, object]:
         "error_class": row["error_class"],
         "error_summary": row["error_summary"],
         "retry_count": int(row["retry_count"]),
+        "access_retry_count": int(row["access_retry_count"]),
+        "retry_at": format_timestamp(row["retry_not_before_utc"]),
         "created_at": format_timestamp(row["created_at_utc"]),
         "updated_at": format_timestamp(row["updated_at_utc"]),
         "expires_at": format_timestamp(row["expires_at_utc"]),
