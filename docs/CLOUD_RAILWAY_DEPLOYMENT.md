@@ -84,7 +84,16 @@ AUDIO_ARCHIVE_WORKER_NETWORK_CLASS=cloud_datacenter
 AUDIO_ARCHIVE_SCRATCH_ROOT=/work/jobs
 AUDIO_ARCHIVE_WORKER_POLL_SECONDS=2
 AUDIO_ARCHIVE_CLEANUP_INTERVAL_SECONDS=300
+AUDIO_ARCHIVE_ACCESS_RETRY_LIMIT=3
+AUDIO_ARCHIVE_ACCESS_RETRY_BASE_SECONDS=300
 ```
+
+A rate-limited, challenged, forbidden or token-failed acquisition is requeued
+automatically after 5, 10 and then 20 minutes. Later attempts wait longer because
+the condition being waited out is usually a rate-limit window on the worker's
+egress path. Set `AUDIO_ARCHIVE_ACCESS_RETRY_LIMIT=0` to disable automatic
+requeueing and leave every failure for a manual retry. A source that is
+unavailable, private or region-blocked is never retried automatically.
 
 If Railway datacenter egress is blocked by YouTube, configure one worker-only proxy
 secret:

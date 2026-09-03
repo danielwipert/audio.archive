@@ -248,6 +248,8 @@ class CloudWebRepository:
                 UPDATE jobs
                 SET processing_state = %s,
                     retry_count = retry_count + 1,
+                    access_retry_count = 0,
+                    retry_not_before_utc = NULL,
                     error_stage = NULL,
                     error_class = NULL,
                     error_summary = NULL,

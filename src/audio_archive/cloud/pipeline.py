@@ -161,7 +161,12 @@ class CloudJobProcessor:
             self._rollback_unpublished(claim.job_id)
             stage = self._current_stage(claim.job_id)
             try:
-                self.execution.fail_job(job_id=claim.job_id, stage=stage, error=exc)
+                self.execution.fail_job(
+                    job_id=claim.job_id,
+                    stage=stage,
+                    error=exc,
+                    retry_policy=self.settings.access_retry_policy,
+                )
             finally:
                 if not attempt_closed:
                     self.execution.finish_attempt(

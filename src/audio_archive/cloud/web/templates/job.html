@@ -19,6 +19,13 @@
 </section>
 {% endif %}
 
+{% if view.job.retry_at and view.job.processing_state in ["ready", "pending"] %}
+<section class="panel" style="margin-bottom:20px">
+  <h2>Waiting to retry</h2>
+  <p class="meta">A YouTube access failure stopped attempt {{ view.job.access_retry_count }}. The worker retries automatically from {{ view.job.retry_at }}; no action is needed.</p>
+</section>
+{% endif %}
+
 {% if view.job.processing_state == "needs_review" %}
 <section class="panel" style="margin-bottom:20px">
   <h2>Source review required</h2>

@@ -66,6 +66,51 @@ class CloudJobRequest:
             raise ValueError("import_row must be positive")
 
 
+RETRYABLE_ACCESS_ERROR_CLASSES = frozenset(
+    {
+        "SourceAccessRateLimited",
+        "SourceAccessBotCheck",
+        "SourceAccessForbidden",
+        "SourceAccessTokenFailure",
+    }
+)
+"""Access failures that a later attempt from the same worker can plausibly clear.
+
+`SourceUnavailable` is deliberately absent: a removed, private or region-blocked
+video does not become available by waiting, so it stays a user decision.
+"""
+
+
+@dataclass(frozen=True)
+class AccessRetryPolicy:
+    """How often, and how far apart, the worker retries a source-access failure."""
+
+    limit: int = 3
+    base_seconds: int = 300
+    maximum_seconds: int = 3600
+
+    def __post_init__(self) -> None:
+        if self.limit < 0:
+            raise ValueError("limit cannot be negative")
+        if self.base_seconds <= 0:
+            raise ValueError("base_seconds must be positive")
+        if self.maximum_seconds < self.base_seconds:
+            raise ValueError("maximum_seconds cannot be shorter than base_seconds")
+
+    def delay_seconds(self, attempt: int) -> int:
+        """Return the wait before a 1-based attempt: 5, 10, 20 minutes by default."""
+
+        if attempt < 1:
+            raise ValueError("attempt must be positive")
+        return min(self.base_seconds * 2 ** (attempt - 1), self.maximum_seconds)
+
+    def permits(self, *, error_class: str, attempts_used: int) -> bool:
+        return (
+            error_class in RETRYABLE_ACCESS_ERROR_CLASSES
+            and 0 <= attempts_used < self.limit
+        )
+
+
 @dataclass(frozen=True)
 class WorkerClaim:
     job_id: int

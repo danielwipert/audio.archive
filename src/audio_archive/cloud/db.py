@@ -145,6 +145,10 @@ class CloudDatabase:
                     SELECT j.id, j.processing_state
                     FROM jobs AS j
                     WHERE j.processing_state IN ('ready', 'pending')
+                      AND (
+                          j.retry_not_before_utc IS NULL
+                          OR j.retry_not_before_utc <= NOW()
+                      )
                       AND NOT EXISTS (
                           SELECT 1
                           FROM worker_claims AS active_claim

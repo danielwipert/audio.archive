@@ -21,7 +21,7 @@ def cloud_db() -> CloudDatabase:
 
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1]
+    assert database.apply_migrations(root / "migrations") == [1, 2]
     return database
 
 
@@ -33,7 +33,7 @@ def test_migrations_are_idempotent(cloud_db: CloudDatabase) -> None:
         versions = connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert [row["version"] for row in versions] == [1]
+    assert [row["version"] for row in versions] == [1, 2]
 
 
 def test_create_manual_job_starts_pending(cloud_db: CloudDatabase) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 
 from ..resolver import CandidateScore, ResolutionDecision
 from ..tooling import ToolExecutionError
@@ -10,11 +11,22 @@ from .db import CloudDatabase
 from .models import (
     ACTIVE_PROCESSING_STATES,
     ALLOWED_PROCESSING_TRANSITIONS,
+    AccessRetryPolicy,
     DeliveryState,
     ProcessingState,
     WorkerNetworkClass,
     ensure_processing_transition,
 )
+
+
+@dataclass(frozen=True)
+class FailureOutcome:
+    """What became of a failing job: recorded only, or recorded and requeued."""
+
+    recorded: bool
+    error_class: str | None = None
+    retry_at_utc: datetime | None = None
+    retry_attempt: int | None = None
 
 
 @dataclass(frozen=True)
@@ -378,19 +390,29 @@ class CloudExecutionRepository:
         job_id: int,
         stage: str,
         error: BaseException,
-    ) -> bool:
-        """Fail a job if its current state still permits a transition to failed."""
+        retry_policy: AccessRetryPolicy | None = None,
+    ) -> FailureOutcome:
+        """Fail a job if its current state still permits a transition to failed.
+
+        A transient source-access failure is recorded and then requeued for a later
+        attempt inside the same transaction, so no observer sees a job that is failed
+        but destined to run again.
+        """
 
         with self.database.connect() as connection:
             row = connection.execute(
-                "SELECT processing_state FROM jobs WHERE id = %s FOR UPDATE",
+                """
+                SELECT processing_state, access_retry_count,
+                       source_extractor, source_id, source_url
+                FROM jobs WHERE id = %s FOR UPDATE
+                """,
                 (job_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(f"Job {job_id} does not exist")
             old_state = ProcessingState(str(row["processing_state"]))
             if ProcessingState.FAILED not in ALLOWED_PROCESSING_TRANSITIONS[old_state]:
-                return False
+                return FailureOutcome(recorded=False)
             summary = str(error)[:4000]
             error_class = classify_job_error(old_state.value, error)
             connection.execute(
@@ -419,7 +441,68 @@ class CloudExecutionRepository:
                     json.dumps({"stage": stage, "error_class": error_class}, sort_keys=True),
                 ),
             )
-            return True
+
+            attempts_used = int(row["access_retry_count"])
+            if retry_policy is None or not retry_policy.permits(
+                error_class=error_class, attempts_used=attempts_used
+            ):
+                return FailureOutcome(recorded=True, error_class=error_class)
+
+            attempt = attempts_used + 1
+            delay_seconds = retry_policy.delay_seconds(attempt)
+            target = (
+                ProcessingState.READY
+                if row["source_extractor"] == "youtube" and row["source_id"] and row["source_url"]
+                else ProcessingState.PENDING
+            )
+            ensure_processing_transition(ProcessingState.FAILED, target)
+            retry_row = connection.execute(
+                """
+                UPDATE jobs
+                SET processing_state = %s,
+                    access_retry_count = %s,
+                    retry_not_before_utc = NOW() + make_interval(secs => %s),
+                    error_stage = NULL,
+                    error_class = NULL,
+                    error_summary = NULL,
+                    started_at_utc = NULL,
+                    updated_at_utc = NOW()
+                WHERE id = %s
+                RETURNING retry_not_before_utc
+                """,
+                (target.value, attempt, delay_seconds, job_id),
+            ).fetchone()
+            assert retry_row is not None
+            retry_at = retry_row["retry_not_before_utc"]
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, from_processing_state, to_processing_state,
+                    event_type, message, detail_json
+                ) VALUES (%s, 'failed', %s, 'access_retry_scheduled', %s, %s::jsonb)
+                """,
+                (
+                    job_id,
+                    target.value,
+                    f"{error_class}: automatic retry {attempt} of {retry_policy.limit} "
+                    f"scheduled in {delay_seconds} seconds",
+                    json.dumps(
+                        {
+                            "error_class": error_class,
+                            "attempt": attempt,
+                            "limit": retry_policy.limit,
+                            "delay_seconds": delay_seconds,
+                        },
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            return FailureOutcome(
+                recorded=True,
+                error_class=error_class,
+                retry_at_utc=retry_at,
+                retry_attempt=attempt,
+            )
 
     @staticmethod
     def _insert_candidates(connection, job_id: int, ranked: tuple[CandidateScore, ...]) -> None:

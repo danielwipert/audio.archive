@@ -16,6 +16,7 @@ from audio_archive.cloud.db import CloudDatabase
 from audio_archive.cloud.delivery import DeliveryRepository, TemporaryDeliveryService
 from audio_archive.cloud.execution import CloudExecutionRepository
 from audio_archive.cloud.models import (
+    AccessRetryPolicy,
     CloudJobRequest,
     CloudProfile,
     ProcessingState,
@@ -26,6 +27,7 @@ from audio_archive.cloud.storage import PublishedObject
 from audio_archive.cloud.worker import ClaimHeartbeat, CloudSequentialWorker
 from audio_archive.config import AppConfig
 from audio_archive.integrity import listed_checksum_paths, write_sha256sums
+from audio_archive.tooling import CommandResult, ToolExecutionError
 from audio_archive.manifest import write_manifest_atomic
 from audio_archive.verify import AudioStream, MediaProbe, sha256_file
 
@@ -248,7 +250,7 @@ def cloud_db() -> CloudDatabase:
         connection.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1]
+    assert database.apply_migrations(root / "migrations") == [1, 2]
     return database
 
 
@@ -566,3 +568,136 @@ def test_sequential_worker_claims_runs_and_releases_job(
         assert connection.execute(
             "SELECT 1 FROM worker_claims WHERE job_id = %s", (job_id,)
         ).fetchone() is None
+
+
+RATE_LIMITED_STDERR = (
+    "WARNING: [youtube] dQw4w9WgXcQ: Unable to download webpage: "
+    "HTTP Error 429: Too Many Requests"
+)
+POLICY = AccessRetryPolicy(limit=2, base_seconds=300)
+
+
+def _tool_failure(stderr: str) -> ToolExecutionError:
+    return ToolExecutionError(
+        CommandResult(
+            argv=("yt-dlp", VIDEO_URL),
+            returncode=1,
+            stdout="",
+            stderr=stderr,
+            started_at_utc="2026-09-03T00:00:00+00:00",
+            finished_at_utc="2026-09-03T00:00:13+00:00",
+        )
+    )
+
+
+def _pinned_job(cloud_db: CloudDatabase, state: ProcessingState) -> int:
+    job_id = cloud_db.create_job(
+        CloudJobRequest(url=VIDEO_URL, profile=CloudProfile.SOURCE, origin="url")
+    )
+    cloud_db.transition_processing(job_id, state)
+    return job_id
+
+
+def test_rate_limited_download_is_requeued_instead_of_left_failed(
+    cloud_db: CloudDatabase,
+) -> None:
+    job_id = _pinned_job(cloud_db, ProcessingState.DOWNLOADING)
+
+    outcome = CloudExecutionRepository(cloud_db).fail_job(
+        job_id=job_id,
+        stage="downloading",
+        error=_tool_failure(RATE_LIMITED_STDERR),
+        retry_policy=POLICY,
+    )
+
+    assert outcome.recorded
+    assert outcome.error_class == "SourceAccessRateLimited"
+    assert outcome.retry_attempt == 1
+    job = cloud_db.get_job(job_id)
+    assert job["processing_state"] == ProcessingState.READY.value
+    assert job["access_retry_count"] == 1
+    assert job["retry_not_before_utc"] is not None
+    # The failure detail is cleared from the job because the job is runnable again;
+    # the history keeps the record.
+    assert job["error_class"] is None
+    with cloud_db.connect() as connection:
+        events = connection.execute(
+            "SELECT event_type FROM job_events WHERE job_id = %s ORDER BY id",
+            (job_id,),
+        ).fetchall()
+    assert [row["event_type"] for row in events][-2:] == ["failed", "access_retry_scheduled"]
+
+
+def test_a_job_waiting_out_its_backoff_is_not_claimable(cloud_db: CloudDatabase) -> None:
+    job_id = _pinned_job(cloud_db, ProcessingState.DOWNLOADING)
+    CloudExecutionRepository(cloud_db).fail_job(
+        job_id=job_id,
+        stage="downloading",
+        error=_tool_failure(RATE_LIMITED_STDERR),
+        retry_policy=POLICY,
+    )
+
+    assert cloud_db.claim_next_job(worker_id="worker-1") is None
+
+    with cloud_db.connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET retry_not_before_utc = NOW() - INTERVAL '1 second' WHERE id = %s",
+            (job_id,),
+        )
+
+    claim = cloud_db.claim_next_job(worker_id="worker-1")
+    assert claim is not None and claim.job_id == job_id
+
+
+def test_the_automatic_retry_budget_is_finite(cloud_db: CloudDatabase) -> None:
+    job_id = _pinned_job(cloud_db, ProcessingState.DOWNLOADING)
+    execution = CloudExecutionRepository(cloud_db)
+    with cloud_db.connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET access_retry_count = %s WHERE id = %s", (POLICY.limit, job_id)
+        )
+
+    outcome = execution.fail_job(
+        job_id=job_id,
+        stage="downloading",
+        error=_tool_failure(RATE_LIMITED_STDERR),
+        retry_policy=POLICY,
+    )
+
+    assert outcome.retry_at_utc is None
+    job = cloud_db.get_job(job_id)
+    assert job["processing_state"] == ProcessingState.FAILED.value
+    assert job["error_class"] == "SourceAccessRateLimited"
+    assert job["retry_not_before_utc"] is None
+
+
+def test_a_conversion_failure_is_never_requeued_automatically(cloud_db: CloudDatabase) -> None:
+    job_id = _pinned_job(cloud_db, ProcessingState.DOWNLOADING)
+    cloud_db.transition_processing(job_id, ProcessingState.VERIFYING_MASTER)
+    cloud_db.transition_processing(job_id, ProcessingState.CONVERTING)
+
+    outcome = CloudExecutionRepository(cloud_db).fail_job(
+        job_id=job_id,
+        stage="converting",
+        error=_tool_failure("Error opening output file: Invalid data found"),
+        retry_policy=POLICY,
+    )
+
+    assert outcome.error_class == "ToolExecutionError"
+    assert outcome.retry_at_utc is None
+    assert cloud_db.get_job(job_id)["processing_state"] == ProcessingState.FAILED.value
+
+
+def test_an_unavailable_source_is_never_requeued_automatically(cloud_db: CloudDatabase) -> None:
+    job_id = _pinned_job(cloud_db, ProcessingState.DOWNLOADING)
+
+    outcome = CloudExecutionRepository(cloud_db).fail_job(
+        job_id=job_id,
+        stage="downloading",
+        error=_tool_failure("ERROR: [youtube] dQw4w9WgXcQ: Video unavailable"),
+        retry_policy=POLICY,
+    )
+
+    assert outcome.error_class == "SourceUnavailable"
+    assert outcome.retry_at_utc is None
+    assert cloud_db.get_job(job_id)["processing_state"] == ProcessingState.FAILED.value
