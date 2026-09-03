@@ -6,7 +6,12 @@ from datetime import datetime
 
 from ..urls import parse_youtube_url
 from .db import CloudDatabase
-from .models import DeliveryState, ProcessingState, ensure_processing_transition
+from .models import (
+    ALLOWED_PROCESSING_TRANSITIONS,
+    DeliveryState,
+    ProcessingState,
+    ensure_processing_transition,
+)
 
 
 @dataclass(frozen=True)
@@ -217,6 +222,55 @@ class CloudWebRepository:
                 )
                 """,
                 (job_id,),
+            )
+
+    def cancel_job(self, job_id: int) -> None:
+        """Cancel work that has not started, or has stopped without publishing.
+
+        A job being processed right now is never cancelled out from under its worker:
+        the claim lease is checked inside the same transaction as the state change.
+        """
+
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT processing_state, delivery_state FROM jobs WHERE id = %s FOR UPDATE",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Job {job_id} does not exist")
+            old_state = ProcessingState(str(row["processing_state"]))
+            if DeliveryState(str(row["delivery_state"])) is not DeliveryState.NOT_PUBLISHED:
+                raise ValueError("A job with published delivery cannot be cancelled")
+            if ProcessingState.CANCELLED not in ALLOWED_PROCESSING_TRANSITIONS[old_state]:
+                raise ValueError(f"A {old_state.value} job cannot be cancelled")
+            claimed = connection.execute(
+                """
+                SELECT 1 FROM worker_claims
+                WHERE job_id = %s AND lease_expires_at_utc > NOW()
+                """,
+                (job_id,),
+            ).fetchone()
+            if claimed:
+                raise ValueError("This job is being processed right now; pause the queue first")
+            connection.execute(
+                """
+                UPDATE jobs
+                SET processing_state = 'cancelled',
+                    retry_not_before_utc = NULL,
+                    completed_at_utc = NOW(),
+                    updated_at_utc = NOW()
+                WHERE id = %s
+                """,
+                (job_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, from_processing_state, to_processing_state,
+                    event_type, message
+                ) VALUES (%s, %s, 'cancelled', 'cancelled', 'User cancelled the job')
+                """,
+                (job_id, old_state.value),
             )
 
     def retry_job(self, job_id: int) -> ProcessingState:

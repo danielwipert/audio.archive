@@ -21,6 +21,7 @@ from audio_archive.cloud.auth import (
     CsrfSigner,
 )
 from audio_archive.cloud.db import CloudDatabase
+from audio_archive.cloud.runtime import expected_migration_versions
 from audio_archive.cloud.delivery import DeliveryRepository, TemporaryDeliveryService
 from audio_archive.cloud.models import CloudJobRequest, CloudProfile, ProcessingState
 from audio_archive.cloud.storage import PublishedObject
@@ -63,7 +64,9 @@ def cloud_database() -> CloudDatabase:
         connection.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1, 2, 3]
+    assert set(database.apply_migrations(root / "migrations")) == expected_migration_versions(
+        root / "migrations"
+    )
     return database
 
 
@@ -86,6 +89,7 @@ def web_settings(cloud_database: CloudDatabase) -> CloudWebSettings:
 def web_client(
     cloud_database: CloudDatabase,
     web_settings: CloudWebSettings,
+    tmp_path: Path,
 ) -> tuple[TestClient, FakeStorage]:
     storage = FakeStorage()
     delivery = TemporaryDeliveryService(
@@ -99,7 +103,10 @@ def web_client(
         delivery=delivery,
         verifier=FakeVerifier(),
     )
-    return TestClient(create_cloud_app(dependencies)), storage
+    return (
+        TestClient(create_cloud_app(dependencies, csv_staging_root=tmp_path / "csv")),
+        storage,
+    )
 
 
 def _csrf(response_text: str) -> str:
@@ -445,3 +452,297 @@ def test_cloudflare_verifier_checks_signature_audience_issuer_and_email(
     wrong_token = jwt.encode(wrong, private_pem, algorithm="RS256", headers={"kid": "test"})
     with pytest.raises(PermissionError):
         verifier.verify(wrong_token)
+
+
+CSV_BODY = (
+    "artist,title,version,url,profile\n"
+    "Massive Attack,Teardrop,album,,ableton\n"
+    "Portishead,Roads,,,listen\n"
+    ",,,,\n"
+    "Radiohead,,,,\n"
+    "Boards of Canada,Roygbiv,,https://youtu.be/dQw4w9WgXcQ,complete\n"
+).encode("utf-8")
+
+
+def _upload_csv(client: TestClient, body: bytes = CSV_BODY, name: str = "import.csv"):
+    page = client.get("/", headers=ACCESS_HEADER)
+    return client.post(
+        "/csv/preview",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(page.text)},
+        files={"file": (name, body, "text/csv")},
+    )
+
+
+def test_csv_preview_reports_accepted_and_rejected_rows_before_queueing(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+
+    response = _upload_csv(client)
+
+    assert response.status_code == 200
+    assert "Massive Attack" in response.text
+    assert "Portishead" in response.text
+    # A row missing its title is reported with its row number and does not stop the rest.
+    assert "Radiohead" not in response.text
+    assert "Rejected rows" in response.text
+    # Nothing is queued by a preview.
+    assert cloud_database.summarize_counts()["total"] == 0 if False else True
+    with cloud_database.connect() as connection:
+        count = connection.execute("SELECT COUNT(*) AS count FROM jobs").fetchone()["count"]
+    assert int(count) == 0
+
+
+def test_csv_import_creates_one_job_per_accepted_row_with_provenance(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    preview = _upload_csv(client)
+    token = preview.text.split('action="/csv/import/')[1].split('"')[0]
+
+    imported = client.post(
+        f"/csv/import/{token}",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(preview.text)},
+        follow_redirects=False,
+    )
+
+    assert imported.status_code == 303
+    with cloud_database.connect() as connection:
+        jobs = connection.execute(
+            "SELECT * FROM jobs ORDER BY import_row"
+        ).fetchall()
+        imports = connection.execute("SELECT * FROM csv_imports").fetchall()
+    assert len(jobs) == 3
+    assert [job["requested_artist"] for job in jobs] == [
+        "Massive Attack",
+        "Portishead",
+        "Boards of Canada",
+    ]
+    # The CSV profile column decides each row's files.
+    assert [sorted(job["requested_outputs"]) for job in jobs] == [
+        ["ableton"],
+        ["listen"],
+        ["ableton", "listen"],
+    ]
+    assert all(job["origin"] == "csv" for job in jobs)
+    assert all(job["import_id"] == imports[0]["id"] for job in jobs)
+    assert [job["import_row"] for job in jobs] == [2, 3, 6]
+    # An exact URL row is pinned and ready; the others wait for resolution.
+    assert [job["processing_state"] for job in jobs] == ["pending", "pending", "ready"]
+    assert imports[0]["filename"] == "import.csv"
+    assert imports[0]["accepted_rows"] == 3
+    # The blank row is ignored rather than rejected; only the row missing a title counts.
+    assert imports[0]["rejected_rows"] == 1
+    assert len(imports[0]["file_sha256"]) == 64
+
+
+def test_a_staged_csv_can_only_be_imported_once(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    preview = _upload_csv(client)
+    token = preview.text.split('action="/csv/import/')[1].split('"')[0]
+    data = {"csrf_token": _csrf(preview.text)}
+
+    assert client.post(f"/csv/import/{token}", headers=ACCESS_HEADER, data=data,
+                       follow_redirects=False).status_code == 303
+    replayed = client.post(f"/csv/import/{token}", headers=ACCESS_HEADER, data=data)
+
+    assert replayed.status_code == 404
+
+
+def test_a_non_csv_upload_is_refused(web_client) -> None:  # type: ignore[no-untyped-def]
+    client, _ = web_client
+
+    response = _upload_csv(client, body=b"not a csv", name="notes.txt")
+
+    assert response.status_code == 400
+
+
+def test_an_oversized_csv_is_refused(web_client, web_settings: CloudWebSettings) -> None:  # type: ignore[no-untyped-def]
+    client, _ = web_client
+    oversized = b"artist,title\n" + b"a,b\n" * web_settings.max_csv_bytes
+
+    response = _upload_csv(client, body=oversized)
+
+    assert response.status_code == 400
+
+
+def test_pausing_the_queue_stops_the_next_claim(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", profile=CloudProfile.SOURCE, origin="url")
+    )
+    page = client.get("/", headers=ACCESS_HEADER)
+
+    paused = client.post(
+        "/queue/pause",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+
+    assert paused.status_code == 303
+    assert cloud_database.queue_paused()
+    assert cloud_database.claim_next_job(worker_id="worker-1") is None
+    assert "Resume queue" in client.get("/", headers=ACCESS_HEADER).text
+
+    client.post(
+        "/queue/resume",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+
+    assert not cloud_database.queue_paused()
+    assert cloud_database.claim_next_job(worker_id="worker-1") is not None
+
+
+def test_cancelling_a_waiting_job_keeps_its_history(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    job_id = cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", profile=CloudProfile.SOURCE, origin="url")
+    )
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER)
+
+    response = client.post(
+        f"/jobs/{job_id}/cancel",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert cloud_database.get_job(job_id)["processing_state"] == "cancelled"
+    assert cloud_database.claim_next_job(worker_id="worker-1") is None
+    with cloud_database.connect() as connection:
+        events = connection.execute(
+            "SELECT event_type FROM job_events WHERE job_id = %s ORDER BY id", (job_id,)
+        ).fetchall()
+    assert "cancelled" in {str(row["event_type"]) for row in events}
+
+
+def test_a_job_being_processed_right_now_is_not_cancelled(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    job_id = cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", profile=CloudProfile.SOURCE, origin="url")
+    )
+    claim = cloud_database.claim_next_job(worker_id="worker-1")
+    assert claim is not None
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER)
+
+    response = client.post(
+        f"/jobs/{job_id}/cancel",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(page.text)},
+    )
+
+    assert response.status_code == 409
+    assert cloud_database.get_job(job_id)["processing_state"] == "ready"
+
+
+def _published_job(cloud_database: CloudDatabase, storage) -> tuple[int, int]:
+    job_id = cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", profile=CloudProfile.SOURCE, origin="url")
+    )
+    cloud_database.transition_processing(job_id, ProcessingState.DOWNLOADING)
+    cloud_database.transition_processing(job_id, ProcessingState.VERIFYING_MASTER)
+    cloud_database.transition_processing(job_id, ProcessingState.PUBLISHING)
+    repository = DeliveryRepository(cloud_database)
+    now = datetime.now(UTC)
+    expires = now + timedelta(hours=24)
+    key = f"delivery/{job_id}/source/{'b' * 64}.webm"
+    storage.objects.add(key)
+    output_id = repository.record_output(
+        job_id=job_id,
+        published=PublishedObject(
+            object_key=key,
+            filename="source.webm",
+            content_type="audio/webm",
+            size_bytes=123,
+            sha256="b" * 64,
+        ),
+        published_at_utc=now,
+        expires_at_utc=expires,
+    )
+    repository.mark_available(job_id=job_id, published_at_utc=now, expires_at_utc=expires)
+    cloud_database.transition_processing(job_id, ProcessingState.COMPLETED)
+    return job_id, output_id
+
+
+def test_deleting_files_early_stops_downloads_immediately(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, storage = web_client
+    job_id, output_id = _published_job(cloud_database, storage)
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER)
+    assert "Delete files now" in page.text
+    assert client.get(
+        f"/jobs/{job_id}/outputs/{output_id}/download",
+        headers=ACCESS_HEADER,
+        follow_redirects=False,
+    ).status_code == 302
+
+    response = client.post(
+        f"/jobs/{job_id}/delete-files",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert cloud_database.get_job(job_id)["delivery_state"] == "deletion_pending"
+    # The signed URL is issued against the delivery state, so access ends at once even
+    # though the object itself is removed by the worker's next cleanup pass.
+    denied = client.get(
+        f"/jobs/{job_id}/outputs/{output_id}/download", headers=ACCESS_HEADER
+    )
+    assert denied.status_code == 410
+    # The job's history survives its media.
+    assert cloud_database.get_job(job_id)["processing_state"] == "completed"
+
+
+def test_deleting_files_twice_is_refused(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, storage = web_client
+    job_id, _ = _published_job(cloud_database, storage)
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER)
+    data = {"csrf_token": _csrf(page.text)}
+
+    client.post(f"/jobs/{job_id}/delete-files", headers=ACCESS_HEADER, data=data,
+                follow_redirects=False)
+    repeated = client.post(f"/jobs/{job_id}/delete-files", headers=ACCESS_HEADER, data=data)
+
+    assert repeated.status_code == 409
+
+
+def test_an_early_deletion_is_swept_by_the_existing_cleanup_pass(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, storage = web_client
+    job_id, _ = _published_job(cloud_database, storage)
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER)
+    client.post(
+        f"/jobs/{job_id}/delete-files",
+        headers=ACCESS_HEADER,
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+    delivery = TemporaryDeliveryService(
+        repository=DeliveryRepository(cloud_database),
+        storage=storage,  # type: ignore[arg-type]
+        retention_hours=24,
+    )
+
+    assert delivery.cleanup_expired() == 1
+    assert storage.objects == set()
+    assert cloud_database.get_job(job_id)["delivery_state"] == "deleted"

@@ -208,3 +208,31 @@ verified acquisition, and that is what reuse now preserves.
 Retained workspaces are removed when the job reaches a terminal state, or after a
 configurable retention window, so failed-job diagnostics do not accumulate
 indefinitely on worker disk.
+
+## DEC-015 — Cloud queue controls and CSV vocabulary
+
+- **Status:** Accepted
+- **Date:** 2026-09-03
+
+Pausing is a property of the queue, not of a job, so it lives in one row the worker
+reads before claiming. Pausing never interrupts work in progress: the running job
+finishes and no further job is claimed, which is what CLOUD_SPEC section 10.2 means
+by "pause after current job".
+
+Cancelling is refused while a live worker claim exists, checked inside the same
+transaction as the state change, so a job is never cancelled out from under the
+worker processing it. A job whose delivery is already published cannot be
+cancelled; its files are deleted instead.
+
+Deleting temporary files early moves the delivery to `deletion_pending`. Downloads
+stop at once because every signed URL is issued against the delivery state, while
+the objects themselves are removed by the worker's existing cleanup pass, with the
+storage lifecycle rule as the backstop. Job history is untouched, so an early
+deletion reads the same as an expiry in the interface.
+
+The CSV schema stays the one v0.3 defined, including its `profile` column, because
+the same file must work for both applications. The cloud translates that column
+into its output set: `ableton` to the Ableton WAV, `listen` to the MP3, `complete`
+to both, and `archive` to the source master alone. A per-import override is
+deliberately not offered: a row's own profile and a form-level default would need a
+precedence rule, and the preview already shows what each row will produce.

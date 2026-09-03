@@ -29,9 +29,23 @@
       <p class="meta" style="margin-top:8px">The verified source master and its metadata are always downloadable. Every file is made from that master, never from another download.</p>
       <div class="actions"><button type="submit">Find and Rip</button></div>
     </form>
+    <form method="post" action="/csv/preview" enctype="multipart/form-data" style="margin-top:26px;border-top:1px solid var(--rule);padding-top:18px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="csv">Import a CSV</label>
+      <input id="csv" name="file" type="file" accept=".csv,text/csv" required>
+      <p class="meta" style="margin-top:8px">Columns: artist, title, and optionally version, url, profile. You see what will be queued before anything starts.</p>
+      <div class="actions"><button class="secondary" type="submit">Preview rows</button></div>
+    </form>
   </section>
   <aside class="panel score">
     <h2>Queue</h2>
+    <form method="post" action="/queue/{{ 'resume' if paused else 'pause' }}" style="margin-bottom:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="actions" style="margin-top:0">
+        <button class="{{ '' if paused else 'secondary' }}" type="submit">{{ "Resume queue" if paused else "Pause after current job" }}</button>
+        {% if paused %}<span class="meta">Paused. The job in progress finishes; nothing new starts.</span>{% endif %}
+      </div>
+    </form>
     <div class="stats">
       <div class="stat"><strong>{{ counts.total }}</strong><span>Total jobs</span></div>
       <div class="stat"><strong>{{ counts.pending }}</strong><span>Queued</span></div>

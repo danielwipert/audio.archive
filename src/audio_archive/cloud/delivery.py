@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .db import CloudDatabase
-from .models import DeliveryState, ProcessingState
+from .models import DeliveryState, ProcessingState, ensure_delivery_transition
 from .storage import PublishedObject, R2DeliveryStorage
 
 
@@ -218,6 +218,48 @@ class DeliveryRepository:
                     (job_id,),
                 )
             return job_ids
+
+    def request_early_deletion(self, job_id: int) -> None:
+        """Stop serving a job's files now and queue its objects for removal.
+
+        Downloads stop the moment the delivery leaves `available`, because every signed
+        URL is issued against that state. The objects themselves are removed by the
+        worker's next cleanup pass, with the storage lifecycle rule as the backstop.
+        """
+
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT delivery_state FROM jobs WHERE id = %s FOR UPDATE",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Job {job_id} does not exist")
+            old_state = DeliveryState(str(row["delivery_state"]))
+            if old_state is not DeliveryState.AVAILABLE:
+                raise ValueError("Only an available delivery can be deleted early")
+            ensure_delivery_transition(old_state, DeliveryState.DELETION_PENDING)
+            connection.execute(
+                """
+                UPDATE jobs
+                SET delivery_state = 'deletion_pending',
+                    deletion_requested_at_utc = NOW(),
+                    updated_at_utc = NOW()
+                WHERE id = %s
+                """,
+                (job_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO job_events (
+                    job_id, from_delivery_state, to_delivery_state,
+                    event_type, message
+                ) VALUES (
+                    %s, 'available', 'deletion_pending', 'delivery_deletion_requested',
+                    'User deleted the temporary files before they expired'
+                )
+                """,
+                (job_id,),
+            )
 
     def list_cleanup_outputs(self, *, limit: int = 100) -> list[OutputRecord]:
         if limit <= 0:

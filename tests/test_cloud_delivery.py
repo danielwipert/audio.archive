@@ -8,6 +8,7 @@ import psycopg
 import pytest
 
 from audio_archive.cloud.db import CloudDatabase
+from audio_archive.cloud.runtime import expected_migration_versions
 from audio_archive.cloud.delivery import DeliveryRepository, DeliveryUnavailable, TemporaryDeliveryService
 from audio_archive.cloud.models import CloudJobRequest, DeliveryState, ProcessingState
 from audio_archive.cloud.storage import PublishedObject
@@ -45,7 +46,9 @@ def delivery_db() -> CloudDatabase:
 
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1, 2, 3]
+    assert set(database.apply_migrations(root / "migrations")) == expected_migration_versions(
+        root / "migrations"
+    )
     return database
 
 

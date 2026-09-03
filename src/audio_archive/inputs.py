@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
+from uuid import uuid4
 import csv
 import io
+import threading
 
 from .models import JobRequest
 from .urls import parse_youtube_url
@@ -133,3 +135,47 @@ def preview_csv(path: Path, *, max_bytes: int = 5 * 1024 * 1024) -> CsvPreview:
 def attach_import_id(request: JobRequest, import_id: int) -> JobRequest:
     return replace(request, import_id=import_id)
 
+
+class CsvPreviewStore:
+    """Hold an uploaded CSV between its preview and the user's decision to import it.
+
+    The file is staged rather than re-uploaded so the recorded provenance - filename
+    and file checksum - comes from the bytes that were actually validated.
+    """
+
+    def __init__(self, root: Path, max_bytes: int):
+        self.root = root
+        self.max_bytes = max_bytes
+        self._lock = threading.Lock()
+        self._files: dict[str, tuple[Path, str]] = {}
+
+    def create(self, filename: str, content: bytes) -> tuple[str, CsvPreview]:
+        original_name = Path(filename or "import.csv").name
+        if Path(original_name).suffix.casefold() != ".csv":
+            raise ValueError("Only CSV files are accepted")
+        if len(content) > self.max_bytes:
+            raise ValueError(f"CSV exceeds the configured {self.max_bytes}-byte limit")
+        token = uuid4().hex
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / f"{token}.csv"
+        path.write_bytes(content)
+        try:
+            parsed = preview_csv(path, max_bytes=self.max_bytes)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        preview = replace(parsed, filename=original_name)
+        with self._lock:
+            self._files[token] = (path, original_name)
+        return token, preview
+
+    def consume(self, token: str) -> CsvPreview:
+        with self._lock:
+            stored = self._files.pop(token, None)
+        if stored is None:
+            raise KeyError("CSV preview is no longer available")
+        path, original_name = stored
+        try:
+            return replace(preview_csv(path, max_bytes=self.max_bytes), filename=original_name)
+        finally:
+            path.unlink(missing_ok=True)

@@ -188,7 +188,7 @@ def test_expected_migration_versions_tracks_the_shipped_files() -> None:
     root = Path(__file__).resolve().parents[1]
     versions = expected_migration_versions(root / "migrations")
 
-    assert versions == {1, 2, 3}
+    assert versions == {1, 2, 3, 4}
 
 
 def test_a_preset_still_decides_the_outputs_when_none_are_chosen() -> None:
