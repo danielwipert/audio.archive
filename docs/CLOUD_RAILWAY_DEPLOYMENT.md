@@ -53,7 +53,15 @@ CLOUDFLARE_ACCESS_TEAM_DOMAIN=https://<team-name>.cloudflareaccess.com
 CLOUDFLARE_ACCESS_AUD=<Access application audience tag>
 AUDIO_ARCHIVE_CSRF_SECRET=<random secret, minimum 32 characters>
 AUDIO_ARCHIVE_ALLOWED_EMAILS=<comma-separated approved email addresses>
+AUDIO_ARCHIVE_MAX_CSV_BYTES=5242880
 ```
+
+A CSV upload is staged on the web container's own disk between its preview and the
+user's decision to import it, so that the recorded filename and checksum come from
+the bytes that were actually validated. The staged file lives for one decision and
+is deleted on import; a redeploy in between simply asks the user to upload again.
+Run one web replica, as this runbook does, or move that staging to shared storage
+first.
 
 Recommended Railway health check:
 
