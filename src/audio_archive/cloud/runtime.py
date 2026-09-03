@@ -55,17 +55,44 @@ def _run_web() -> int:
     return 0
 
 
+def expected_migration_versions(migrations_dir: Path) -> set[int]:
+    """Versions this deployment expects, taken from the migration files it ships with."""
+
+    return {
+        int(path.name.split("_", 1)[0])
+        for path in migrations_dir.glob("[0-9][0-9][0-9][0-9]_*.sql")
+    }
+
+
 def _wait_for_schema(database: CloudDatabase, *, timeout_seconds: int = 180) -> None:
+    """Block until the web service has applied every migration this worker ships with.
+
+    Waiting on the jobs table alone was enough for one migration. A worker that starts
+    against a partly migrated database would fail every claim until the web service
+    caught up, so the wait covers the whole expected set.
+    """
+
+    expected = expected_migration_versions(_migrations_dir())
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
             with database.connect() as connection:
-                connection.execute("SELECT 1 FROM jobs LIMIT 1")
-            return
+                applied = {
+                    int(row["version"])
+                    for row in connection.execute(
+                        "SELECT version FROM schema_migrations"
+                    ).fetchall()
+                }
+            if expected <= applied:
+                return
+            LOGGER.info(
+                "Waiting for migrations %s to be applied by the web service",
+                sorted(expected - applied),
+            )
         except (psycopg.Error, OSError) as exc:
             last_error = exc
-            time.sleep(2)
+        time.sleep(2)
     raise RuntimeError("Cloud database schema was not ready before worker startup timeout") from last_error
 
 

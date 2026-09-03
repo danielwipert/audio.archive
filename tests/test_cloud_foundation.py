@@ -178,3 +178,12 @@ def test_disabled_policy_never_permits_a_retry() -> None:
     assert not AccessRetryPolicy(limit=0).permits(
         error_class="SourceAccessRateLimited", attempts_used=0
     )
+
+
+def test_expected_migration_versions_tracks_the_shipped_files() -> None:
+    from audio_archive.cloud.runtime import expected_migration_versions
+
+    root = Path(__file__).resolve().parents[1]
+    versions = expected_migration_versions(root / "migrations")
+
+    assert versions == {1, 2}
