@@ -11,7 +11,7 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 
 ## Current verified state
 
-- `main` is at 3953111. PRs #25, #27, #28, #29 and #30 landed a spec-versus-repo review
+- `main` is at cb8ac01. PRs #25, #27, #28, #29 and #30 landed a spec-versus-repo review
   and its six findings. DEC-012 to DEC-015 record the decisions; the PR bodies hold the
   detail.
 - Cloud v0.1 now classifies YouTube access failures, requeues the transient ones itself
@@ -41,6 +41,11 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
   been acquired, converted and verified. The role list is derived from one place now.
 - The BgUtils HTTP token server (PR #34) is deployed and working: jobs after it show no
   PO token, BotGuard or script-timeout warnings at all, where job 9 showed all three.
+- Job 11 ran the archive package end to end from Railway on 2026-09-03:
+  `verified_best_available`, no quality warnings, a downloadable `audio-archive.zip`
+  alongside the native source master, checksummed sidecars and thumbnail. Every cloud
+  output - Ableton WAV, 24-bit WAV, MP3 and now the archive package - has produced a
+  downloadable file in production.
 
 ## Cloud v0.1 boundary
 
@@ -53,20 +58,19 @@ the retention window. Source-quality rules remain unchanged.
 Cloud v0.1 works end to end. What remains is proving the paths that have never run in
 production, in rising order of cost:
 
-1. Run one archive-package job. It is the last output never run in the cloud; the
-   Ableton WAV, the 24-bit WAV and the MP3 have all now produced downloadable files.
-2. Run one CSV import, which has never run in production either.
-3. Run one long-form item past the 1.8 GiB threshold, to exercise segmentation in the
+1. Run one CSV import, which has never run in production. It is the last untried path
+   short of the DEC-005 gate itself.
+2. Run one long-form item past the 1.8 GiB threshold, to exercise segmentation in the
    cloud. It is proven by local FFmpeg tests and by nothing else.
-4. Then the DEC-005 gate for the permanent archive: Windows and Ableton acceptance plus
+3. Then the DEC-005 gate for the permanent archive: Windows and Ableton acceptance plus
    one authorized live end-to-end acquisition on the target machine.
 
 ## Known gaps
 
 - Windows/Ableton acceptance and one authorized live end-to-end acquisition still gate
   the permanent archive under DEC-005.
-- Long-form segmentation, the archive package and CSV import are each proven by tests
-  and unproven in production.
+- Long-form segmentation and CSV import are each proven by tests and unproven in
+  production.
 - The proxy intermittently returns truncated or non-TLS responses: jobs 9 and 10 show
   `[SSL: WRONG_VERSION_NUMBER]` and `Incomplete data received in embedded initial data`.
   yt-dlp retries and falls back to the API, so jobs succeed, but a page-derived format
