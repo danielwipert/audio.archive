@@ -6,7 +6,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .db import CloudDatabase
-from .models import DeliveryState, ProcessingState, ensure_delivery_transition
+from .models import (
+    DELIVERY_ROLES,
+    DeliveryState,
+    ProcessingState,
+    ensure_delivery_transition,
+)
 from .storage import PublishedObject, R2DeliveryStorage
 
 
@@ -438,7 +443,7 @@ def _validate_role(object_key: str, published: PublishedObject) -> str:
     if len(parts) < 4 or parts[0] != "delivery":
         raise ValueError("Published object key is outside the delivery namespace")
     role = parts[2]
-    if role not in {"source", "ableton", "wav24", "listen", "package"}:
+    if role not in DELIVERY_ROLES:
         raise ValueError(f"Unsupported delivery role: {role}")
     if not object_key.endswith(published.sha256 + Path(object_key).suffix):
         raise ValueError("Published object key does not match the output digest")

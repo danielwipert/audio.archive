@@ -55,6 +55,17 @@ class CloudOutput(StrEnum):
     PACKAGE = "package"
 
 
+DELIVERY_ROLES = frozenset({"source"} | {output.value for output in CloudOutput})
+"""Every role a published delivery object may carry.
+
+The always-published source master plus each output a job can be asked for. This is
+one list because it was three: the worker, the storage layer and the database each
+carried their own, and a role the worker accepted but the storage layer refused
+failed nowhere except in production, after the audio had already been acquired,
+converted and verified.
+"""
+
+
 PROFILE_OUTPUT_PRESETS: dict[CloudProfile, frozenset[CloudOutput]] = {
     CloudProfile.ABLETON: frozenset({CloudOutput.ABLETON}),
     CloudProfile.SOURCE: frozenset(),

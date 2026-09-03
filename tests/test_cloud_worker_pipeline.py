@@ -26,7 +26,7 @@ from audio_archive.cloud.models import (
     WorkerNetworkClass,
 )
 from audio_archive.cloud.pipeline import CloudJobProcessor
-from audio_archive.cloud.storage import PublishedObject
+from audio_archive.cloud.storage import PublishedObject, object_key_for
 from audio_archive.cloud.web_repository import CloudWebRepository
 from audio_archive.cloud.worker import ClaimHeartbeat, CloudSequentialWorker
 from audio_archive.config import AppConfig
@@ -324,8 +324,9 @@ class FakeDeliveryStorage:
             raise RuntimeError("simulated R2 publication failure")
         digest = sha256_file(path)
         assert digest == expected_sha256
-        suffix = path.suffix.lower()
-        key = f"delivery/{job_id}/{role}/{digest}{suffix}"
+        # Built by the real helper so a role this project cannot publish fails here
+        # too, rather than only in production.
+        key = object_key_for(job_id=job_id, role=role, sha256=digest, suffix=path.suffix)
         self.objects[key] = path.read_bytes()
         return PublishedObject(
             object_key=key,
