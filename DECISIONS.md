@@ -236,3 +236,28 @@ into its output set: `ableton` to the Ableton WAV, `listen` to the MP3, `complet
 to both, and `archive` to the source master alone. A per-import override is
 deliberately not offered: a row's own profile and a form-level default would need a
 precedence rule, and the preview already shows what each row will produce.
+
+## DEC-016 — PO token provider mode
+
+- **Status:** Accepted
+- **Date:** 2026-09-03
+- **Amends:** DEC-006
+
+The cloud worker generates PO tokens through the BgUtils HTTP server rather than
+its script. The script fetches YouTube's homepage itself for every token; behind
+the residential proxy the worker needs for acquisition, that exceeds the
+provider's fixed 20-second budget, which is not configurable. The acquisition
+still succeeds, but it records a token warning and reports
+`best_available_with_warnings`, which is the honest status under section 8.1 and
+not the one the project wants routinely.
+
+The server keeps one warm session, takes the challenge from the page yt-dlp
+already fetched, and receives the worker's proxy per request. It runs beside the
+worker for the worker's lifetime, with the permissions upstream's own image
+grants: environment, network, and FFI and read scoped to `node_modules`.
+
+The provider mode is configuration, not code. Local Windows installations keep the
+script provider, which DEC-006 and DEC-007 already provide for and which needs no
+long-running process. A worker whose server does not start logs the failure and
+continues on the script provider: a degraded quality status is better than a queue
+that refuses to run.
