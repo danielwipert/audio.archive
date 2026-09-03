@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -26,6 +27,9 @@ from .delivery import TemporaryDeliveryService
 from .execution import CloudExecutionRepository, classify_job_error
 from .models import CloudOutput, CloudProfile, ProcessingState, WorkerClaim
 from .workspace import CloudWorkspace
+
+
+LOGGER = logging.getLogger("audio_archive.cloud.pipeline")
 
 
 class HeartbeatGuard(Protocol):
@@ -105,6 +109,7 @@ class CloudJobProcessor:
         )
         workspace = CloudWorkspace.for_claim(self.settings, claim)
         attempt_closed = False
+        workspace_finished = False
         try:
             job = self.database.get_job(claim.job_id)
             state = ProcessingState(str(job["processing_state"]))
@@ -113,6 +118,7 @@ class CloudJobProcessor:
                 if result is not None:
                     self.execution.finish_attempt(attempt_id, result=result.state.value)
                     attempt_closed = True
+                    workspace_finished = True
                     return result
                 job = self.database.get_job(claim.job_id)
                 state = ProcessingState(str(job["processing_state"]))
@@ -121,7 +127,13 @@ class CloudJobProcessor:
                     f"Cloud worker can process only pending or ready jobs, found {state.value}"
                 )
 
-            workspace.prepare()
+            reusable = workspace.prepare()
+            if reusable:
+                LOGGER.info(
+                    "Job %s reuses verified scratch from an earlier attempt: %s",
+                    claim.job_id,
+                    ", ".join(reusable),
+                )
             local_config = workspace.local_config(self.base_config)
             profile = CloudProfile(str(job["profile"]))
             requested = _requested_outputs(job)
@@ -178,6 +190,7 @@ class CloudJobProcessor:
             )
             self.execution.finish_attempt(attempt_id, result=final_state.value)
             attempt_closed = True
+            workspace_finished = True
             return CloudProcessingResult(claim.job_id, final_state, tuple(output_ids))
         except LostWorkerClaim as exc:
             if not attempt_closed:
@@ -210,7 +223,10 @@ class CloudJobProcessor:
                     attempt_closed = True
             raise
         finally:
-            workspace.cleanup()
+            # A failed attempt keeps its workspace so the next one can reuse whatever it
+            # verified. The periodic sweep removes it once no attempt will use it again.
+            if workspace_finished:
+                workspace.discard()
 
     def _resolve_pending(
         self,

@@ -26,9 +26,10 @@ from audio_archive.cloud.models import (
 )
 from audio_archive.cloud.pipeline import CloudJobProcessor
 from audio_archive.cloud.storage import PublishedObject
+from audio_archive.cloud.web_repository import CloudWebRepository
 from audio_archive.cloud.worker import ClaimHeartbeat, CloudSequentialWorker
 from audio_archive.config import AppConfig
-from audio_archive.integrity import listed_checksum_paths, write_sha256sums
+from audio_archive.integrity import listed_checksum_paths, verify_sha256sums, write_sha256sums
 from audio_archive.tooling import CommandResult, ToolExecutionError
 from audio_archive.manifest import write_manifest_atomic
 from audio_archive.verify import AudioStream, MediaProbe, sha256_file
@@ -44,11 +45,19 @@ class NeverRunner:
 
 
 class FakeAcquisitionService:
+    downloads = 0
+
     def __init__(self, config: AppConfig, runner: object):
         self.config = config
 
     def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
         item = self.config.archive_root / "items" / "youtube" / request.video_id
+        if (item / "metadata" / "archive.json").is_file():
+            # The real AcquisitionService returns a verified existing item without
+            # contacting YouTube; the fake stands in for that already-tested path.
+            assert verify_sha256sums(item).valid
+            return self._result(request, item, reused=True)
+        type(self).downloads += 1
         master = item / "master" / f"{request.video_id}.webm"
         source_info = item / "metadata" / "source.info.json"
         manifest_path = item / "metadata" / "archive.json"
@@ -103,6 +112,12 @@ class FakeAcquisitionService:
                 Path("logs/ingest.log"),
             ],
         )
+        return self._result(request, item, reused=False)
+
+    def _result(
+        self, request: AcquisitionRequest, item: Path, *, reused: bool
+    ) -> AcquisitionResult:
+        master = item / "master" / f"{request.video_id}.webm"
         probe = MediaProbe(
             format_name="matroska,webm",
             duration_seconds=1.0,
@@ -118,16 +133,16 @@ class FakeAcquisitionService:
             archive_id=f"youtube:{request.video_id}",
             video_id=request.video_id,
             item_directory=item,
-            manifest_path=manifest_path,
+            manifest_path=item / "metadata" / "archive.json",
             master_path=master,
             master_relative_path=f"master/{request.video_id}.webm",
-            master_sha256=digest,
+            master_sha256=sha256_file(master),
             quality_status="verified_best_available",
             warnings=(),
             source_title="Fixture source",
             source_creator="Fixture channel",
             probe=probe,
-            reused_existing=False,
+            reused_existing=reused,
         )
 
 
@@ -563,7 +578,12 @@ def test_publication_failure_never_makes_partial_outputs_downloadable(
     assert rows and all(row["deleted_at_utc"] is not None for row in rows)
     assert attempt["result"] == "failed"
     assert attempt["error_class"] == "RuntimeError"
-    assert not (cloud_settings.scratch_root / f"job-{job_id}").exists()
+    # The failed attempt keeps its workspace, and what it kept is still verifiable,
+    # so the retry can start from the acquired master instead of downloading again.
+    workspace = cloud_settings.scratch_root / f"job-{job_id}"
+    assert workspace.is_dir()
+    item = workspace / "archive" / "items" / "youtube" / VIDEO_ID
+    assert verify_sha256sums(item).valid
 
 
 def test_abandoned_active_job_is_requeued_from_pinned_source(cloud_db: CloudDatabase) -> None:
@@ -896,3 +916,121 @@ def test_the_manifest_records_the_exact_set_that_was_requested(
         ).fetchone()
     manifest = json.loads(storage.objects[str(row["object_key"])].decode("utf-8"))
     assert manifest["request"]["cloud_outputs"] == ["listen", "wav24"]
+
+
+class FailingAbletonService(FakeAbletonService):
+    """Fail the conversion once, after acquisition has already published its item."""
+
+    failures = 0
+
+    def create(self, item_directory: Path, *, job_id: int):
+        if type(self).failures > 0:
+            type(self).failures -= 1
+            raise RuntimeError("simulated conversion failure")
+        return super().create(item_directory, job_id=job_id)
+
+
+def test_a_retry_reuses_the_verified_master_instead_of_downloading_again(
+    cloud_db: CloudDatabase,
+    cloud_settings: CloudSettings,
+    base_config: AppConfig,
+) -> None:
+    FakeAcquisitionService.downloads = 0
+    FailingAbletonService.failures = 1
+    storage = FakeDeliveryStorage()
+    delivery = TemporaryDeliveryService(
+        repository=DeliveryRepository(cloud_db),
+        storage=storage,  # type: ignore[arg-type]
+        retention_hours=cloud_settings.retention_hours,
+    )
+    processor = CloudJobProcessor(
+        database=cloud_db,
+        settings=cloud_settings,
+        base_config=base_config,
+        runner=NeverRunner(),  # type: ignore[arg-type]
+        delivery=delivery,
+        acquisition_factory=FakeAcquisitionService,  # type: ignore[arg-type]
+        ableton_factory=FailingAbletonService,  # type: ignore[arg-type]
+        wav24_factory=FakeWav24Service,  # type: ignore[arg-type]
+        listening_factory=FakeListeningService,  # type: ignore[arg-type]
+    )
+    job_id = cloud_db.create_job(
+        CloudJobRequest(url=VIDEO_URL, profile=CloudProfile.ABLETON, origin="url")
+    )
+
+    first = cloud_db.claim_next_job(worker_id=cloud_settings.worker_id)
+    assert first is not None
+    with pytest.raises(RuntimeError, match="simulated conversion failure"):
+        processor.process_claim(first, heartbeat=NoopHeartbeat())
+    cloud_db.release_claim(first)
+    assert FakeAcquisitionService.downloads == 1
+    assert cloud_db.get_job(job_id)["processing_state"] == "failed"
+
+    CloudWebRepository(cloud_db).retry_job(job_id)
+    second = cloud_db.claim_next_job(worker_id=cloud_settings.worker_id)
+    assert second is not None
+    result = processor.process_claim(second, heartbeat=NoopHeartbeat())
+    cloud_db.release_claim(second)
+
+    assert result.state is ProcessingState.COMPLETED
+    # The source was acquired once across both attempts.
+    assert FakeAcquisitionService.downloads == 1
+    # A published job no longer needs its scratch.
+    assert not (cloud_settings.scratch_root / f"job-{job_id}").exists()
+
+
+def test_scratch_that_cannot_be_verified_is_not_reused(
+    cloud_db: CloudDatabase,
+    cloud_settings: CloudSettings,
+    base_config: AppConfig,
+) -> None:
+    FakeAcquisitionService.downloads = 0
+    FailingAbletonService.failures = 1
+    storage = FakeDeliveryStorage()
+    delivery = TemporaryDeliveryService(
+        repository=DeliveryRepository(cloud_db),
+        storage=storage,  # type: ignore[arg-type]
+        retention_hours=cloud_settings.retention_hours,
+    )
+    processor = CloudJobProcessor(
+        database=cloud_db,
+        settings=cloud_settings,
+        base_config=base_config,
+        runner=NeverRunner(),  # type: ignore[arg-type]
+        delivery=delivery,
+        acquisition_factory=FakeAcquisitionService,  # type: ignore[arg-type]
+        ableton_factory=FailingAbletonService,  # type: ignore[arg-type]
+        wav24_factory=FakeWav24Service,  # type: ignore[arg-type]
+        listening_factory=FakeListeningService,  # type: ignore[arg-type]
+    )
+    job_id = cloud_db.create_job(
+        CloudJobRequest(url=VIDEO_URL, profile=CloudProfile.ABLETON, origin="url")
+    )
+    first = cloud_db.claim_next_job(worker_id=cloud_settings.worker_id)
+    assert first is not None
+    with pytest.raises(RuntimeError, match="simulated conversion failure"):
+        processor.process_claim(first, heartbeat=NoopHeartbeat())
+    cloud_db.release_claim(first)
+
+    # Corrupt the retained master: its checksum no longer matches the manifest.
+    master = (
+        cloud_settings.scratch_root
+        / f"job-{job_id}"
+        / "archive"
+        / "items"
+        / "youtube"
+        / VIDEO_ID
+        / "master"
+        / f"{VIDEO_ID}.webm"
+    )
+    master.write_bytes(b"tampered")
+
+    CloudWebRepository(cloud_db).retry_job(job_id)
+    second = cloud_db.claim_next_job(worker_id=cloud_settings.worker_id)
+    assert second is not None
+    result = processor.process_claim(second, heartbeat=NoopHeartbeat())
+    cloud_db.release_claim(second)
+
+    assert result.state is ProcessingState.COMPLETED
+    # The unverifiable item was discarded, so the source was acquired again.
+    assert FakeAcquisitionService.downloads == 2

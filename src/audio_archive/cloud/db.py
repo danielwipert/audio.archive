@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 
 from ..urls import parse_youtube_url
 from .models import (
+    TERMINAL_PROCESSING_STATES,
     CloudJobRequest,
     DeliveryState,
     ProcessingState,
@@ -127,6 +128,17 @@ class CloudDatabase:
         if row is None:
             raise KeyError(f"Job {job_id} does not exist")
         return dict(row)
+
+    def job_may_run_again(self, job_id: int) -> bool:
+        """True while a job could still be processed, so its scratch is worth keeping."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT processing_state FROM jobs WHERE id = %s", (job_id,)
+            ).fetchone()
+        if row is None:
+            return False
+        return ProcessingState(str(row["processing_state"])) not in TERMINAL_PROCESSING_STATES
 
     def claim_next_job(
         self,
