@@ -32,9 +32,13 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
   `AUDIO_ARCHIVE_SCRATCH_RETENTION_HOURS` (6). Web adds `AUDIO_ARCHIVE_MAX_CSV_BYTES`.
 - Retained scratch is a real change in worker disk footprint: a failed job holds its
   source master until the sweep reclaims it. Lower the retention if disk is tight.
-- **Unchanged and still unanswered:** whether Railway egress can reach YouTube. The
-  429 that stopped the last production job has not been diagnosed. Everything above is
-  instrumentation and resilience around that question, not an answer to it.
+- **The 429 blocker is resolved.** Job 8 ran end to end from Railway on 2026-09-03:
+  acquisition, `verified_best_available` with no fallback and no quality warnings, a
+  verified 24-bit WAV, checksummed sidecars, and signed downloads with a 24-hour expiry.
+  The proxy path works. Four sessions of BgUtils and client tuning are finished.
+- PR #32 fixed the one thing that broke first: `wav24` was missing from the storage
+  layer's delivery-role list, so a job failed at publishing after its audio had already
+  been acquired, converted and verified. The role list is derived from one place now.
 
 ## Cloud v0.1 boundary
 
@@ -44,21 +48,24 @@ the retention window. Source-quality rules remain unchanged.
 
 ## Exact next step
 
-1. Confirm Railway redeployed web and then worker from `main`.
-2. Check the worker startup log for `YouTube proxy routing is enabled`. If the line is
-   absent, `AUDIO_ARCHIVE_YTDLP_PROXY` is not set on the worker and that alone explains
-   the 429.
-3. If proxy routing is on, check the DataImpulse balance before changing any code.
-4. Retry the Babehoven exact URL with the Ableton output. The job page now names the
-   failure class, so read it rather than the raw tool output.
-5. If three automatic retries fail across about 35 minutes with proxy routing confirmed
-   healthy, that is the evidence for the decision `CLOUD_SPEC.md` section 9.2 and open
-   decision 9 anticipate: move acquisition to a residential worker. The job model and
-   `worker_network_class` already support it.
+Cloud v0.1 works end to end. What remains is proving the paths that have never run in
+production, in rising order of cost:
+
+1. Run one job for each untried output: the MP3 and the archive package. Both were in
+   the same delivery-role gap that stopped `wav24`, and both are fixed and tested, but
+   neither has run in the cloud. The Ableton WAV has, and so has the 24-bit WAV.
+2. Run one CSV import, which has never run in production either.
+3. Run one long-form item past the 1.8 GiB threshold, to exercise segmentation in the
+   cloud. It is proven by local FFmpeg tests and by nothing else.
+4. Then the DEC-005 gate for the permanent archive: Windows and Ableton acceptance plus
+   one authorized live end-to-end acquisition on the target machine.
 
 ## Known gaps
 
 - Windows/Ableton acceptance and one authorized live end-to-end acquisition still gate
   the permanent archive under DEC-005.
-- Long-form segmentation is proven by local tests but has never run a cloud job.
+- Long-form segmentation, MP3, the archive package and CSV import are each proven by
+  tests and unproven in production.
 - An abandoned CSV preview leaves a staged file until the web container recycles.
+- The stray branch `claude/fix-wav24-delivery-role` on GitHub duplicates a commit that
+  is already in `main`; delete it from the branches page.
