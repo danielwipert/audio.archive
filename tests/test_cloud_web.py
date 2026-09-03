@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from audio_archive.cloud.app import WebDependencies, create_cloud_app
+from audio_archive.cloud.app import WebDependencies, _output_label, create_cloud_app
 from audio_archive.cloud.auth import (
     AccessIdentity,
     CloudWebSettings,
@@ -23,7 +23,7 @@ from audio_archive.cloud.auth import (
 from audio_archive.cloud.db import CloudDatabase
 from audio_archive.cloud.runtime import expected_migration_versions
 from audio_archive.cloud.delivery import DeliveryRepository, TemporaryDeliveryService
-from audio_archive.cloud.models import CloudJobRequest, CloudProfile, ProcessingState
+from audio_archive.cloud.models import CloudOutput, CloudJobRequest, CloudProfile, ProcessingState
 from audio_archive.cloud.storage import PublishedObject
 from audio_archive.cloud.web_repository import CloudWebRepository
 
@@ -746,3 +746,80 @@ def test_an_early_deletion_is_swept_by_the_existing_cleanup_pass(
     assert delivery.cleanup_expired() == 1
     assert storage.objects == set()
     assert cloud_database.get_job(job_id)["delivery_state"] == "deleted"
+
+
+def test_a_published_file_is_named_by_what_it_is() -> None:
+    """Every preservation sidecar ships under the source role, so the role alone
+    labelled a checksum file as the audio master."""
+
+    assert _output_label("source", "tE0PSlNVN0Q.webm") == "Native source master"
+    assert _output_label("source", "SHA256SUMS") == "Checksums"
+    assert _output_label("source", "archive.json") == "Archive manifest"
+    assert _output_label("source", "source.info.json") == "Source metadata from YouTube"
+    assert _output_label("source", "ingest.log") == "Acquisition log"
+    assert _output_label("source", "source-thumbnail.webp") == "Source artwork"
+    assert _output_label("wav24", "x.wav") == "Standard WAV, 24-bit"
+    assert _output_label("listen", "x.mp3") == "MP3 listening copy"
+
+
+def test_the_job_page_names_the_files_a_job_asked_for(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    """A job asking only for the 24-bit WAV showed 'Profile: ableton', because the
+    stored preset collapses any non-package choice to that name."""
+
+    client, _ = web_client
+    job_id = cloud_database.create_job(
+        CloudJobRequest(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            origin="url",
+            outputs=frozenset({CloudOutput.WAV24}),
+        )
+    )
+
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER).text
+
+    assert "Files: Standard WAV" in page
+    assert "Profile: ableton" not in page
+
+
+def test_a_source_only_job_says_so(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    job_id = cloud_database.create_job(
+        CloudJobRequest(
+            url="https://youtu.be/dQw4w9WgXcQ", origin="url", outputs=frozenset()
+        )
+    )
+
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER).text
+
+    assert "source master only" in page
+
+
+def test_published_sidecars_are_labelled_individually(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, storage = web_client
+    job_id, _ = _published_job(cloud_database, storage)
+    repository = DeliveryRepository(cloud_database)
+    with cloud_database.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO outputs (
+                job_id, role, object_key, filename, content_type,
+                size_bytes, sha256, published_at_utc, expires_at_utc
+            ) VALUES (
+                %s, 'source', %s, 'SHA256SUMS', 'text/plain',
+                637, %s, NOW(), NOW() + INTERVAL '24 hours'
+            )
+            """,
+            (job_id, f"delivery/{job_id}/source/{'c' * 64}", "c" * 64),
+        )
+    assert repository is not None
+
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER).text
+
+    assert "Checksums" in page
+    assert page.count("Native source master") == 1

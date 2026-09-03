@@ -43,6 +43,36 @@ OUTPUT_LABELS = {
     "package": "Archive package",
 }
 
+SIDECAR_LABELS = {
+    "source.info.json": "Source metadata from YouTube",
+    "archive.json": "Archive manifest",
+    "SHA256SUMS": "Checksums",
+    "ingest.log": "Acquisition log",
+}
+
+REQUESTED_LABELS = {
+    "ableton": "Ableton WAV",
+    "wav24": "Standard WAV",
+    "listen": "MP3",
+    "package": "Archive package",
+}
+
+
+def _output_label(role: str, filename: str) -> str:
+    """Name a published file by what it is.
+
+    Every preservation sidecar is delivered under the source role, so the role alone
+    would label a checksum file as the audio master.
+    """
+
+    if role != "source":
+        return OUTPUT_LABELS.get(role, role)
+    if filename in SIDECAR_LABELS:
+        return SIDECAR_LABELS[filename]
+    if filename.startswith("source-thumbnail"):
+        return "Source artwork"
+    return OUTPUT_LABELS["source"]
+
 
 @dataclass(frozen=True)
 class WebDependencies:
@@ -447,6 +477,10 @@ def _job_payload(row: dict[str, object]) -> dict[str, object]:
         "requested_url": row["requested_url"],
         "profile": row["profile"],
         "requested_outputs": list(row["requested_outputs"] or ()),
+        "requested_labels": [
+            REQUESTED_LABELS.get(str(value), str(value))
+            for value in sorted(row["requested_outputs"] or ())
+        ],
         "source_title": row["source_title"],
         "source_creator": row["source_creator"],
         "quality_status": row["quality_status"],
@@ -475,7 +509,7 @@ def _view_payload(view: JobView) -> dict[str, object]:
                 "filename": row["filename"],
                 "content_type": row["content_type"],
                 "size_bytes": int(row["size_bytes"]),
-                "label": OUTPUT_LABELS.get(str(row["role"]), str(row["role"])),
+                "label": _output_label(str(row["role"]), str(row["filename"])),
                 "sha256": row["sha256"],
                 "expires_at": format_timestamp(row["expires_at_utc"]),
                 "deleted": deleted,

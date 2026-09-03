@@ -65,7 +65,7 @@
       {% for job in jobs %}
       <tr>
         <td><a href="/jobs/{{ job.id }}"><strong>{% if job.artist or job.title %}{{ job.artist or "" }}{% if job.artist and job.title %} — {% endif %}{{ job.title or "" }}{% else %}YouTube {{ job.id }}{% endif %}</strong></a>{% if job.version %}<div class="meta">{{ job.version }}</div>{% endif %}</td>
-        <td>{{ job.requested_outputs|join(', ') if job.requested_outputs else "source only" }}</td>
+        <td>{{ job.requested_labels|join(', ') if job.requested_labels else "source only" }}</td>
         <td><span class="status {{ job.status }}">{{ job.status|replace('_',' ') }}</span></td>
         <td>{{ job.quality_status or "—" }}</td>
         <td class="meta">{{ job.updated_at }}</td>

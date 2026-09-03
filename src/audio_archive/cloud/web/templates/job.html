@@ -5,7 +5,7 @@
 <section style="margin-bottom:28px">
   <h1>{% if view.job.artist or view.job.title %}{{ view.job.artist or "" }}{% if view.job.artist and view.job.title %} — {% endif %}{{ view.job.title or "" }}{% else %}YouTube source{% endif %}</h1>
   {% if view.job.version %}<p class="lede">Requested version: {{ view.job.version }}</p>{% endif %}
-  <div class="actions"><span class="status {{ view.job.status }}">{{ view.job.status|replace('_',' ') }}</span><span class="meta">Profile: {{ view.job.profile }}</span>{% if view.job.quality_status %}<span class="meta">Quality: {{ view.job.quality_status }}</span>{% endif %}</div>
+  <div class="actions"><span class="status {{ view.job.status }}">{{ view.job.status|replace('_',' ') }}</span><span class="meta">Files: {{ view.job.requested_labels|join(', ') if view.job.requested_labels else "source master only" }}</span>{% if view.job.quality_status %}<span class="meta">Quality: {{ view.job.quality_status }}</span>{% endif %}</div>
 </section>
 
 {% if view.job.error_summary %}
