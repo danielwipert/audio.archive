@@ -151,3 +151,34 @@ repeated in application code. DEC-004 keeps its meaning: the pin is an explicit
 maintenance decision recorded in `pyproject.toml`. Duplicating it a second time
 allowed the readiness check to reject a correctly pinned toolchain after a
 dependency update, which blocked the Windows launcher.
+
+## DEC-013 — Chosen download formats
+
+- **Status:** Accepted
+- **Date:** 2026-09-03
+
+A cloud job carries a set of requested outputs rather than one profile. The user
+chooses any combination of the Ableton 32-bit float WAV, a 24-bit PCM WAV, an MP3
+listening copy, and the archive package. The verified source master and its
+sidecars are always published, so they are not part of the chosen set. The stored
+profile remains as the coarse preset that summarizes a choice for provenance and
+display; `requested_outputs` is what the worker acts on, and the durable manifest
+records the exact set beside the preset.
+
+The 24-bit PCM WAV is the alternative PROJECT_SPEC section 9.3 permits when the
+user explicitly accepts integer quantization. It is recorded as a derivative
+rather than as an intermediate: it is a compatibility copy for tools that dislike
+32-bit float, it carries no more source information than the master, and the
+Ableton intermediate remains the canonical editing target under DEC-008. Every
+other DEC-008 rule applies unchanged to it — decoded only from the verified local
+master, source sample rate and mono/stereo layout preserved, and no resampling,
+filtering, normalization or dither. Both WAV variants come from one conversion
+engine so a rule cannot hold for one and lapse for the other.
+
+A 16-bit or CD-rate variant is deliberately not offered. It would require
+resampling and dither, which section 8.3 forbids applying automatically, so it
+would need its own decision rather than a checkbox.
+
+All requested formats are created in one conversion stage from the single verified
+source master. Asking for three files is one acquisition and one pass over that
+master, never three trips through the queue.
