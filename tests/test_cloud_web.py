@@ -286,6 +286,99 @@ def test_retry_clears_failure_and_requeues_pinned_source(cloud_database: CloudDa
     assert job["error_summary"] is None
 
 
+def test_the_submitted_checkboxes_decide_the_files_a_job_creates(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    page = client.get("/", headers=ACCESS_HEADER)
+    # The form offers every format, so a user can pick without editing a URL.
+    for value in ("ableton", "wav24", "listen", "package"):
+        assert f'value="{value}"' in page.text
+
+    created = client.post(
+        "/jobs",
+        headers=ACCESS_HEADER,
+        data={
+            "csrf_token": _csrf(page.text),
+            "url": "https://youtu.be/dQw4w9WgXcQ",
+            "output_choice": "explicit",
+            "outputs": ["wav24", "listen"],
+        },
+        follow_redirects=False,
+    )
+
+    assert created.status_code == 303
+    job = cloud_database.get_job(int(created.headers["location"].rsplit("/", 1)[1]))
+    assert sorted(job["requested_outputs"]) == ["listen", "wav24"]
+    assert job["profile"] == "ableton"
+
+
+def test_clearing_every_checkbox_asks_for_the_source_master_alone(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    page = client.get("/", headers=ACCESS_HEADER)
+
+    created = client.post(
+        "/jobs",
+        headers=ACCESS_HEADER,
+        data={
+            "csrf_token": _csrf(page.text),
+            "url": "https://youtu.be/dQw4w9WgXcQ",
+            # An unchecked box posts nothing at all; the marker says the form was used.
+            "output_choice": "explicit",
+        },
+        follow_redirects=False,
+    )
+
+    assert created.status_code == 303
+    job = cloud_database.get_job(int(created.headers["location"].rsplit("/", 1)[1]))
+    assert list(job["requested_outputs"]) == []
+    assert job["profile"] == "source"
+
+
+def test_a_submission_without_the_marker_still_follows_its_preset(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    page = client.get("/", headers=ACCESS_HEADER)
+
+    created = client.post(
+        "/jobs",
+        headers=ACCESS_HEADER,
+        data={
+            "csrf_token": _csrf(page.text),
+            "url": "https://youtu.be/dQw4w9WgXcQ",
+            "profile": "package",
+        },
+        follow_redirects=False,
+    )
+
+    assert created.status_code == 303
+    job = cloud_database.get_job(int(created.headers["location"].rsplit("/", 1)[1]))
+    assert sorted(job["requested_outputs"]) == ["ableton", "package"]
+
+
+def test_an_unknown_format_is_rejected(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    page = client.get("/", headers=ACCESS_HEADER)
+
+    response = client.post(
+        "/jobs",
+        headers=ACCESS_HEADER,
+        data={
+            "csrf_token": _csrf(page.text),
+            "url": "https://youtu.be/dQw4w9WgXcQ",
+            "output_choice": "explicit",
+            "outputs": ["flac"],
+        },
+    )
+
+    assert response.status_code == 400
+
+
 def test_manual_retry_clears_the_automatic_backoff(cloud_database: CloudDatabase) -> None:
     job_id = cloud_database.create_job(
         CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", profile=CloudProfile.SOURCE, origin="url")
