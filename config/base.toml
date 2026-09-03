@@ -16,6 +16,10 @@ yt_dlp = "yt-dlp"
 ffmpeg = "ffmpeg"
 ffprobe = "ffprobe"
 deno = "deno"
+# "script" runs the BgUtils generator per request; "http" asks a long-lived
+# BgUtils server that reuses the page yt-dlp already fetched.
+pot_provider = "script"
+pot_http_base_url = "http://127.0.0.1:4416"
 
 [resolver]
 candidate_limit = 5

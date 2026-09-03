@@ -4,14 +4,19 @@ import argparse
 import logging
 import os
 import signal
+import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 import psycopg
 import uvicorn
 
-from ..config import discover_project_root, load_config
+from ..acquisition import BGUTIL_PROVIDER_DIRECTORY
+from ..config import AppConfig, discover_project_root, load_config
 from ..tooling import CommandRunner, SubprocessRunner
 from .app import build_web_dependencies, create_cloud_app
 from .config import CloudSettings
@@ -97,6 +102,114 @@ def _wait_for_schema(database: CloudDatabase, *, timeout_seconds: int = 180) -> 
     raise RuntimeError("Cloud database schema was not ready before worker startup timeout") from last_error
 
 
+def bgutil_server_command(server_home: Path, deno: str, port: int) -> tuple[str, ...]:
+    """The BgUtils server invocation, matching the permissions upstream's image grants."""
+
+    modules = server_home / "node_modules"
+    return (
+        deno,
+        "run",
+        "--allow-env",
+        "--allow-net",
+        f"--allow-ffi={modules}",
+        f"--allow-read={modules}",
+        str(server_home / "src" / "main.ts"),
+        "--port",
+        str(port),
+    )
+
+
+class BgUtilServer:
+    """Run the BgUtils PO token server beside the worker for the worker's lifetime.
+
+    Token generation is the step a slow egress path breaks: the script provider fetches
+    YouTube's homepage per request and can exceed the provider's fixed timeout. This
+    server keeps one warm session instead, and the provider hands it the page yt-dlp
+    already fetched.
+    """
+
+    def __init__(self, *, server_home: Path, deno: str, port: int = 4416):
+        self.server_home = server_home
+        self.deno = deno
+        self.port = port
+        self.process: subprocess.Popen[bytes] | None = None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def start(self, *, timeout_seconds: float = 60.0) -> bool:
+        """Start the server and wait for it to answer. False if it never does."""
+
+        entry = self.server_home / "src" / "main.ts"
+        if not entry.is_file():
+            LOGGER.error("BgUtils server source is missing at %s", entry)
+            return False
+        self.process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+            bgutil_server_command(self.server_home, self.deno, self.port),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                LOGGER.error(
+                    "BgUtils server exited during startup with code %s", self.process.returncode
+                )
+                return False
+            if self._ping():
+                LOGGER.info("BgUtils PO token server is ready on %s", self.base_url)
+                return True
+            time.sleep(1)
+        LOGGER.error("BgUtils server did not answer %s/ping before the startup timeout", self.base_url)
+        self.stop()
+        return False
+
+    def _ping(self) -> bool:
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/ping", timeout=2) as response:
+                return 200 <= response.status < 300
+        except (urllib.error.URLError, OSError):
+            return False
+
+    def stop(self) -> None:
+        if self.process is None or self.process.poll() is not None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+        finally:
+            self.process = None
+
+
+def _acquisition_config(settings: CloudSettings) -> tuple[AppConfig, BgUtilServer | None]:
+    """Load the media configuration, starting the token server when it is wanted.
+
+    A server that will not start is reported and the worker continues on the script
+    provider: acquisition still succeeds, and its own warning classification records
+    that a token problem may have limited the formats.
+    """
+
+    config = load_config()
+    if os.getenv("AUDIO_ARCHIVE_POT_PROVIDER", "http").strip().casefold() != "http":
+        return config, None
+    server = BgUtilServer(
+        server_home=config.tools_directory / BGUTIL_PROVIDER_DIRECTORY / "server",
+        deno=os.getenv("AUDIO_ARCHIVE_DENO", "deno"),
+        port=int(os.getenv("AUDIO_ARCHIVE_POT_PORT", "4416")),
+    )
+    if not server.start():
+        LOGGER.warning(
+            "Falling back to the BgUtils script provider; acquisitions may report "
+            "token warnings and a lower quality status"
+        )
+        return config, None
+    return replace(config, pot_provider="http", pot_http_base_url=server.base_url), server
+
+
 def _worker_runner(settings: CloudSettings) -> CommandRunner:
     runner: CommandRunner = SubprocessRunner(
         timeout_seconds=settings.subprocess_timeout_seconds
@@ -108,7 +221,9 @@ def _worker_runner(settings: CloudSettings) -> CommandRunner:
     return runner
 
 
-def _build_worker(settings: CloudSettings) -> tuple[CloudSequentialWorker, TemporaryDeliveryService]:
+def _build_worker(
+    settings: CloudSettings,
+) -> tuple[CloudSequentialWorker, TemporaryDeliveryService, BgUtilServer | None]:
     database = CloudDatabase(settings.database_url)
     _wait_for_schema(database)
     storage = R2DeliveryStorage.from_settings(settings)
@@ -117,10 +232,11 @@ def _build_worker(settings: CloudSettings) -> tuple[CloudSequentialWorker, Tempo
         storage=storage,
         retention_hours=settings.retention_hours,
     )
+    base_config, token_server = _acquisition_config(settings)
     processor = CloudJobProcessor(
         database=database,
         settings=settings,
-        base_config=load_config(),
+        base_config=base_config,
         runner=_worker_runner(settings),
         delivery=delivery,
     )
@@ -129,12 +245,12 @@ def _build_worker(settings: CloudSettings) -> tuple[CloudSequentialWorker, Tempo
         settings=settings,
         processor=processor,
     )
-    return worker, delivery
+    return worker, delivery, token_server
 
 
 def _run_worker() -> int:
     settings = CloudSettings.from_env()
-    worker, delivery = _build_worker(settings)
+    worker, delivery, token_server = _build_worker(settings)
     recovered = worker.recover_startup()
     if recovered:
         LOGGER.warning("Recovered abandoned cloud jobs: %s", recovered)
@@ -197,6 +313,8 @@ def _run_worker() -> int:
         else:
             LOGGER.info("Job %s finished in state %s", result.job_id, result.state.value)
 
+    if token_server is not None:
+        token_server.stop()
     LOGGER.info("Cloud worker stopped")
     return 0
 

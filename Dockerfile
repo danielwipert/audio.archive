@@ -44,6 +44,7 @@ RUN git clone --depth 1 --single-branch --branch "${BGUTIL_VERSION}" \
        /app/tools/bgutil-ytdlp-pot-provider \
     && cd /app/tools/bgutil-ytdlp-pot-provider/server \
     && deno install --allow-scripts=npm:canvas --frozen \
+    && deno cache --frozen src/main.ts \
     && test -f /app/tools/bgutil-ytdlp-pot-provider/server/src/main.ts
 
 CMD ["python", "-m", "audio_archive.cloud.runtime", "web"]

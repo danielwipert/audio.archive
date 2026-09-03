@@ -26,6 +26,12 @@ class AppConfig:
     auto_select_min_score: int
     auto_select_min_margin: int
     max_csv_bytes: int
+    pot_provider: str = "script"
+    pot_http_base_url: str = "http://127.0.0.1:4416"
+
+    def __post_init__(self) -> None:
+        if self.pot_provider not in {"script", "http"}:
+            raise ValueError(f"Unknown PO token provider: {self.pot_provider}")
 
 
 def discover_project_root(start: Path | None = None) -> Path:
@@ -68,6 +74,10 @@ def load_config(project_root: Path | None = None) -> AppConfig:
         auto_select_min_score=int(raw["resolver"]["auto_select_min_score"]),
         auto_select_min_margin=int(raw["resolver"]["auto_select_min_margin"]),
         max_csv_bytes=int(raw["input"]["max_csv_bytes"]),
+        pot_provider=str(raw["tools"].get("pot_provider", "script")),
+        pot_http_base_url=str(
+            raw["tools"].get("pot_http_base_url", "http://127.0.0.1:4416")
+        ),
     )
 
 
