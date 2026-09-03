@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from .config import AppConfig
 from .integrity import listed_checksum_paths, verify_sha256sums, write_sha256sums
 from .manifest import write_manifest_atomic
-from .policy import GIB, AbletonOutputPlan, plan_ableton_output
+from .policy import ABLETON_VARIANT, GIB, AbletonOutputPlan, PcmVariant, plan_ableton_output
 from .tooling import (
     CommandResult,
     CommandRunner,
@@ -21,7 +21,7 @@ from .verify import MediaProbe, probe_media, sha256_file
 
 
 @dataclass(frozen=True)
-class AbletonAsset:
+class PcmAsset:
     relative_path: str
     path: Path
     sha256: str
@@ -31,12 +31,14 @@ class AbletonAsset:
     start_sample: int
     end_sample: int
     segment_index: int | None
+    role: str = ABLETON_VARIANT.role
+    audio_format: str = ABLETON_VARIANT.codec
 
     def manifest_record(self, source_sha256: str) -> dict[str, object]:
         return {
-            "role": "ableton",
+            "role": self.role,
             "path": self.relative_path,
-            "audio_format": "pcm_f32le",
+            "audio_format": self.audio_format,
             "sample_rate_hz": self.sample_rate_hz,
             "channels": self.channels,
             "normalization": False,
@@ -52,12 +54,18 @@ class AbletonAsset:
 
 
 @dataclass(frozen=True)
-class AbletonResult:
+class PcmResult:
     archive_id: str
     item_directory: Path
-    assets: tuple[AbletonAsset, ...]
+    assets: tuple[PcmAsset, ...]
     segmented: bool
     reused_existing: bool
+
+
+# The Ableton intermediate is the original and most-used output of this engine, so the
+# established names stay valid for every existing caller.
+AbletonAsset = PcmAsset
+AbletonResult = PcmResult
 
 
 class ExistingDerivativeConflict(RuntimeError):
@@ -84,22 +92,25 @@ def _load_manifest(item_directory: Path) -> tuple[Path, dict[str, object]]:
     return path, data
 
 
-def _verify_ableton_probe(
+def _verify_pcm_probe(
     probe: MediaProbe,
     *,
+    variant: PcmVariant,
     sample_rate_hz: int,
     channels: int,
 ) -> int:
     if "wav" not in probe.format_name.casefold().split(","):
-        raise ValueError(f"Ableton output container must be WAV, found {probe.format_name}")
-    if probe.audio.codec != "pcm_f32le":
-        raise ValueError(f"Ableton output codec must be pcm_f32le, found {probe.audio.codec}")
+        raise ValueError(f"{variant.label} output container must be WAV, found {probe.format_name}")
+    if probe.audio.codec != variant.codec:
+        raise ValueError(
+            f"{variant.label} output codec must be {variant.codec}, found {probe.audio.codec}"
+        )
     if probe.audio.sample_rate_hz != sample_rate_hz:
-        raise ValueError("Ableton output changed the source sample rate")
+        raise ValueError(f"{variant.label} output changed the source sample rate")
     if probe.audio.channels != channels:
-        raise ValueError("Ableton output changed the source channel count")
+        raise ValueError(f"{variant.label} output changed the source channel count")
     if probe.audio.sample_count is None or probe.audio.sample_count <= 0:
-        raise ValueError("FFprobe did not report an exact Ableton output sample count")
+        raise ValueError(f"FFprobe did not report an exact {variant.label} output sample count")
     return probe.audio.sample_count
 
 
@@ -134,12 +145,26 @@ def _restore_bytes(path: Path, data: bytes) -> None:
     temporary.replace(path)
 
 
-class AbletonService:
-    def __init__(self, config: AppConfig, runner: CommandRunner):
+class PcmWavService:
+    """Decode a verified source master into uncompressed WAV under one PCM variant.
+
+    Every rule DEC-008 fixes for the Ableton intermediate applies to each variant: the
+    decode reads only the local master, applies no filter, resampling, channel remap,
+    normalization or dither, and long-form output is segmented on exact sample
+    boundaries and verified before publication.
+    """
+
+    def __init__(
+        self,
+        config: AppConfig,
+        runner: CommandRunner,
+        variant: PcmVariant = ABLETON_VARIANT,
+    ):
         self.config = config
         self.runner = runner
+        self.variant = variant
 
-    def create(self, item_directory: Path, *, job_id: int) -> AbletonResult:
+    def create(self, item_directory: Path, *, job_id: int) -> PcmResult:
         integrity = verify_sha256sums(item_directory)
         if not integrity.valid:
             raise ExistingDerivativeConflict(
@@ -165,15 +190,19 @@ class AbletonService:
         sample_rate_hz = source_probe.audio.sample_rate_hz
         channels = source_probe.audio.channels
         if sample_rate_hz is None or channels not in {1, 2}:
-            raise ValueError("Ableton conversion requires a known mono or stereo source rate")
+            raise ValueError(
+                f"{self.variant.label} conversion requires a known mono or stereo source rate"
+            )
 
-        intermediates = manifest.get("intermediates")
-        if not isinstance(intermediates, list):
-            raise ExistingDerivativeConflict("Manifest intermediates field is invalid")
+        section = manifest.get(self.variant.manifest_section)
+        if not isinstance(section, list):
+            raise ExistingDerivativeConflict(
+                f"Manifest {self.variant.manifest_section} field is invalid"
+            )
         existing_records = [
             record
-            for record in intermediates
-            if isinstance(record, dict) and record.get("role") == "ableton"
+            for record in section
+            if isinstance(record, dict) and record.get("role") == self.variant.role
         ]
         if existing_records:
             assets = self._verify_existing(
@@ -185,7 +214,7 @@ class AbletonService:
                 sample_rate_hz,
                 channels,
             )
-            return AbletonResult(
+            return PcmResult(
                 archive_id,
                 item_directory,
                 assets,
@@ -196,12 +225,12 @@ class AbletonService:
         video_id = archive_id.partition(":")[2]
         if not video_id:
             raise ExistingDerivativeConflict("Archive ID does not contain a source ID")
-        output_root = item_directory / "intermediates" / "ableton"
+        output_root = item_directory / self.variant.output_subpath
         final_single = output_root / f"{video_id}.wav"
         final_segments = output_root / "segments"
         if final_single.exists() or final_segments.exists():
             raise ExistingDerivativeConflict(
-                "Unrecorded Ableton output already exists; refusing to overwrite it"
+                f"Unrecorded {self.variant.label} output already exists; refusing to overwrite it"
             )
 
         plan = plan_ableton_output(
@@ -210,14 +239,15 @@ class AbletonService:
             channels=channels,
             safe_size_gib=self.config.safe_wav_size_gib,
             segment_minutes=self.config.segment_minutes,
+            bits_per_sample=self.variant.bits_per_sample,
         )
         ffmpeg = resolve_tool(self.config.ffmpeg, self.config.tools_directory)
         ffmpeg_version = read_tool_version(self.runner, ffmpeg, "-version")
-        job_temp = self.config.temp_directory / str(job_id) / "ableton"
+        job_temp = self.config.temp_directory / str(job_id) / self.variant.role
         if job_temp.exists():
             shutil.rmtree(job_temp)
         job_temp.mkdir(parents=True)
-        convert_log = job_temp / "convert.log"
+        convert_log = job_temp / self.variant.log_name
         if plan.segmented:
             generated_root = job_temp / "segments"
             generated_root.mkdir()
@@ -237,7 +267,7 @@ class AbletonService:
                 "-sn",
                 "-dn",
                 "-c:a",
-                "pcm_f32le",
+                self.variant.codec,
                 "-f",
                 "segment",
                 "-segment_time",
@@ -266,7 +296,7 @@ class AbletonService:
                 "-sn",
                 "-dn",
                 "-c:a",
-                "pcm_f32le",
+                self.variant.codec,
                 str(output_path),
             )
         try:
@@ -283,7 +313,7 @@ class AbletonService:
 
         generated = sorted(generated_root.glob(f"{video_id}*.wav"))
         if not generated:
-            raise ValueError("FFmpeg did not create an Ableton WAV")
+            raise ValueError(f"FFmpeg did not create a {self.variant.label} WAV")
         assets = self._verify_generated(
             generated,
             segmented=plan.segmented,
@@ -326,23 +356,30 @@ class AbletonService:
         ffprobe: str,
         sample_rate_hz: int,
         channels: int,
-    ) -> tuple[AbletonAsset, ...]:
+    ) -> tuple[PcmAsset, ...]:
         listed = {path.as_posix() for path in checksum_paths}
-        assets: list[AbletonAsset] = []
+        assets: list[PcmAsset] = []
         expected_start = 0
         segmented = len(records) > 1
         for position, record in enumerate(records, 1):
             relative = str(record.get("path") or "")
             path = _safe_item_path(item_directory, relative)
             if relative not in listed:
-                raise ExistingDerivativeConflict(f"Ableton output is absent from SHA256SUMS: {relative}")
+                raise ExistingDerivativeConflict(
+                    f"{self.variant.label} output is absent from SHA256SUMS: {relative}"
+                )
             digest = str(record.get("sha256") or "")
             if not path.is_file() or sha256_file(path) != digest:
-                raise ExistingDerivativeConflict(f"Ableton output failed checksum verification: {relative}")
+                raise ExistingDerivativeConflict(
+                    f"{self.variant.label} output failed checksum verification: {relative}"
+                )
             if record.get("source_sha256") != source_sha256:
-                raise ExistingDerivativeConflict("Ableton output was not made from the current source master")
-            sample_count = _verify_ableton_probe(
+                raise ExistingDerivativeConflict(
+                    f"{self.variant.label} output was not made from the current source master"
+                )
+            sample_count = _verify_pcm_probe(
                 probe_media(self.runner, ffprobe, path),
+                variant=self.variant,
                 sample_rate_hz=sample_rate_hz,
                 channels=channels,
             )
@@ -350,11 +387,13 @@ class AbletonService:
             end_sample = int(record.get("end_sample", start_sample + sample_count))
             segment_index = int(record["segment_index"]) if record.get("segment_index") else None
             if start_sample != expected_start or end_sample - start_sample != sample_count:
-                raise ExistingDerivativeConflict("Ableton segment boundaries are not contiguous")
+                raise ExistingDerivativeConflict(
+                    f"{self.variant.label} segment boundaries are not contiguous"
+                )
             if segmented and segment_index != position:
-                raise ExistingDerivativeConflict("Ableton segment order is invalid")
+                raise ExistingDerivativeConflict(f"{self.variant.label} segment order is invalid")
             assets.append(
-                AbletonAsset(
+                PcmAsset(
                     relative,
                     path,
                     digest,
@@ -364,6 +403,8 @@ class AbletonService:
                     start_sample,
                     end_sample,
                     segment_index,
+                    self.variant.role,
+                    self.variant.codec,
                 )
             )
             expected_start = end_sample
@@ -380,25 +421,28 @@ class AbletonService:
         sample_rate_hz: int,
         channels: int,
         safe_bytes: int,
-    ) -> tuple[AbletonAsset, ...]:
-        assets: list[AbletonAsset] = []
+    ) -> tuple[PcmAsset, ...]:
+        assets: list[PcmAsset] = []
         start_sample = 0
         for position, path in enumerate(generated, 1):
             if path.stat().st_size > safe_bytes:
-                raise ValueError(f"Ableton output exceeds the configured safe size: {path.name}")
-            sample_count = _verify_ableton_probe(
+                raise ValueError(
+                    f"{self.variant.label} output exceeds the configured safe size: {path.name}"
+                )
+            sample_count = _verify_pcm_probe(
                 probe_media(self.runner, ffprobe, path),
+                variant=self.variant,
                 sample_rate_hz=sample_rate_hz,
                 channels=channels,
             )
             end_sample = start_sample + sample_count
             relative = (
-                Path("intermediates/ableton/segments") / path.name
+                Path(self.variant.output_subpath) / "segments" / path.name
                 if segmented
-                else Path("intermediates/ableton") / f"{video_id}.wav"
+                else Path(self.variant.output_subpath) / f"{video_id}.wav"
             )
             assets.append(
-                AbletonAsset(
+                PcmAsset(
                     relative.as_posix(),
                     item_directory / relative,
                     sha256_file(path),
@@ -408,6 +452,8 @@ class AbletonService:
                     start_sample,
                     end_sample,
                     position if segmented else None,
+                    self.variant.role,
+                    self.variant.codec,
                 )
             )
             start_sample = end_sample
@@ -423,16 +469,16 @@ class AbletonService:
         source_sha256: str,
         convert_log: Path,
         generated: list[Path],
-        assets: tuple[AbletonAsset, ...],
+        assets: tuple[PcmAsset, ...],
         plan: AbletonOutputPlan,
         job_id: int,
-    ) -> AbletonResult:
+    ) -> PcmResult:
         original_manifest = manifest_path.read_bytes()
         checksum_file = item_directory / "checksums" / "SHA256SUMS"
         original_checksums = checksum_file.read_bytes()
-        final_log = item_directory / "logs" / "convert.log"
+        final_log = item_directory / "logs" / self.variant.log_name
         original_log = final_log.read_bytes() if final_log.is_file() else None
-        output_root = item_directory / "intermediates" / "ableton"
+        output_root = item_directory / self.variant.output_subpath
         staging = output_root / f".staging-{job_id}"
         if staging.exists():
             shutil.rmtree(staging)
@@ -458,20 +504,24 @@ class AbletonService:
             shutil.copy2(convert_log, staged_log)
             os.replace(staged_log, final_log)
 
-            intermediates = manifest["intermediates"]
-            if not isinstance(intermediates, list):
-                raise ExistingDerivativeConflict("Manifest intermediates field is invalid")
-            manifest["intermediates"] = intermediates + [
+            section = manifest[self.variant.manifest_section]
+            if not isinstance(section, list):
+                raise ExistingDerivativeConflict(
+                    f"Manifest {self.variant.manifest_section} field is invalid"
+                )
+            manifest[self.variant.manifest_section] = section + [
                 asset.manifest_record(source_sha256) for asset in assets
             ]
             write_manifest_atomic(manifest_path, manifest)
             new_paths = [Path(asset.relative_path) for asset in assets]
-            new_paths.extend((Path("logs/convert.log"), Path("metadata/archive.json")))
+            new_paths.extend(
+                (Path("logs") / self.variant.log_name, Path("metadata/archive.json"))
+            )
             write_sha256sums(item_directory, list(dict.fromkeys(checksum_paths + new_paths)))
             verified = verify_sha256sums(item_directory)
             if not verified.valid:
                 raise ExistingDerivativeConflict(
-                    "Published Ableton output failed integrity verification: "
+                    f"Published {self.variant.label} output failed integrity verification: "
                     + "; ".join(verified.errors)
                 )
         except Exception:
@@ -489,10 +539,17 @@ class AbletonService:
             raise
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        return AbletonResult(
+        return PcmResult(
             str(manifest["archive_id"]),
             item_directory,
             assets,
             plan.segmented,
             False,
         )
+
+
+class AbletonService(PcmWavService):
+    """The default editing target: 32-bit float PCM, fixed by DEC-008."""
+
+    def __init__(self, config: AppConfig, runner: CommandRunner):
+        super().__init__(config, runner, ABLETON_VARIANT)
