@@ -21,6 +21,7 @@ from .pipeline import CloudJobProcessor
 from .proxy import YtDlpProxyRunner
 from .storage import R2DeliveryStorage
 from .worker import CloudSequentialWorker
+from .workspace import sweep_stale_workspaces
 
 LOGGER = logging.getLogger("audio_archive.cloud.runtime")
 
@@ -163,6 +164,16 @@ def _run_worker() -> int:
                     LOGGER.info("Deleted %s expired delivery objects", deleted)
             except Exception:  # noqa: BLE001 - cleanup should not take the worker down
                 LOGGER.exception("Expired-delivery cleanup failed")
+            try:
+                swept = sweep_stale_workspaces(
+                    settings,
+                    is_retainable=worker.database.job_may_run_again,
+                    retention_hours=settings.scratch_retention_hours,
+                )
+                if swept:
+                    LOGGER.info("Removed scratch workspaces for jobs %s", list(swept))
+            except Exception:  # noqa: BLE001 - cleanup should not take the worker down
+                LOGGER.exception("Scratch workspace sweep failed")
             next_cleanup = now + cleanup_seconds
 
         try:

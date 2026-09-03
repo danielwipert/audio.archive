@@ -20,6 +20,7 @@ class CloudSettings:
     retention_hours: int = 24
     signed_url_ttl_seconds: int = 900
     subprocess_timeout_seconds: int = 1200
+    scratch_retention_hours: int = 6
     access_retry_limit: int = 3
     access_retry_base_seconds: int = 300
 
@@ -40,6 +41,8 @@ class CloudSettings:
             raise ValueError("AUDIO_ARCHIVE_SIGNED_URL_TTL_SECONDS must be between 60 and 3600")
         if self.subprocess_timeout_seconds <= 0:
             raise ValueError("AUDIO_ARCHIVE_SUBPROCESS_TIMEOUT_SECONDS must be positive")
+        if self.scratch_retention_hours <= 0:
+            raise ValueError("AUDIO_ARCHIVE_SCRATCH_RETENTION_HOURS must be positive")
         if self.access_retry_limit < 0:
             raise ValueError("AUDIO_ARCHIVE_ACCESS_RETRY_LIMIT cannot be negative")
         if self.access_retry_base_seconds <= 0:
@@ -59,6 +62,7 @@ class CloudSettings:
             f"retention_hours={self.retention_hours!r}, "
             f"signed_url_ttl_seconds={self.signed_url_ttl_seconds!r}, "
             f"subprocess_timeout_seconds={self.subprocess_timeout_seconds!r}, "
+            f"scratch_retention_hours={self.scratch_retention_hours!r}, "
             f"access_retry_limit={self.access_retry_limit!r}, "
             f"access_retry_base_seconds={self.access_retry_base_seconds!r})"
         )
@@ -83,6 +87,7 @@ class CloudSettings:
             subprocess_timeout_seconds=_positive_int(
                 "AUDIO_ARCHIVE_SUBPROCESS_TIMEOUT_SECONDS", 1200
             ),
+            scratch_retention_hours=_positive_int("AUDIO_ARCHIVE_SCRATCH_RETENTION_HOURS", 6),
             access_retry_limit=_non_negative_int("AUDIO_ARCHIVE_ACCESS_RETRY_LIMIT", 3),
             access_retry_base_seconds=_positive_int(
                 "AUDIO_ARCHIVE_ACCESS_RETRY_BASE_SECONDS", 300
