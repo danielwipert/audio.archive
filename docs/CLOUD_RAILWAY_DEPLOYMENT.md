@@ -95,7 +95,20 @@ AUDIO_ARCHIVE_CLEANUP_INTERVAL_SECONDS=300
 AUDIO_ARCHIVE_ACCESS_RETRY_LIMIT=3
 AUDIO_ARCHIVE_ACCESS_RETRY_BASE_SECONDS=300
 AUDIO_ARCHIVE_SCRATCH_RETENTION_HOURS=6
+AUDIO_ARCHIVE_POT_PROVIDER=http
 ```
+
+The worker runs the BgUtils PO token server beside itself and points yt-dlp at it on
+`127.0.0.1:4416`. The alternative, `AUDIO_ARCHIVE_POT_PROVIDER=script`, generates each
+token by running the BgUtils script, which fetches YouTube's homepage itself for every
+request; behind a residential proxy that is slow enough to exceed the provider's fixed
+20-second budget, and the acquisition then completes as `best_available_with_warnings`
+instead of `verified_best_available`. The server reuses the page yt-dlp already fetched
+and keeps one warm session, and the provider forwards the worker's proxy to it per
+request.
+
+If the server does not start, the worker logs the failure and continues on the script
+provider rather than refusing to process jobs.
 
 A rate-limited, challenged, forbidden or token-failed acquisition is requeued
 automatically after 5, 10 and then 20 minutes. Later attempts wait longer because

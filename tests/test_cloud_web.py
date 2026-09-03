@@ -13,7 +13,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from audio_archive.cloud.app import WebDependencies, _output_label, create_cloud_app
+from audio_archive.cloud.app import (
+    WebDependencies,
+    _output_label,
+    _warning_view,
+    create_cloud_app,
+)
 from audio_archive.cloud.auth import (
     AccessIdentity,
     CloudWebSettings,
@@ -823,3 +828,47 @@ def test_published_sidecars_are_labelled_individually(
 
     assert "Checksums" in page
     assert page.count("Native source master") == 1
+
+
+JOB_9_WARNINGS = (
+    'WARNING: [youtube] [pot] Error fetching PO Token from "bgutil:script-deno" provider: '
+    "PoTokenProviderError('_get_pot_via_script failed: Timeout expired'); "
+    "WARNING: [youtube] Unable to fetch GVS PO Token for web client; "
+    "ERROR: [download] Got error: homepage-challenge: failed"
+)
+
+
+def test_quality_warnings_are_summarized_with_the_detail_kept() -> None:
+    """Job 9 pasted a screen of tool output into the page, which said less than
+    naming the conditions it described."""
+
+    view = _warning_view(JOB_9_WARNINGS)
+
+    assert view is not None
+    assert view["count"] == 3
+    assert view["categories"] == ["PO token", "signature challenge"]
+    # Nothing is lost: the original text is still there to diagnose from.
+    assert view["detail"] == JOB_9_WARNINGS
+
+
+def test_a_job_without_warnings_shows_nothing() -> None:
+    assert _warning_view(None) is None
+    assert _warning_view("   ") is None
+
+
+def test_the_job_page_names_the_conditions_before_the_tool_output(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    job_id = cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", origin="url")
+    )
+    with cloud_database.connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET warning_summary = %s WHERE id = %s", (JOB_9_WARNINGS, job_id)
+        )
+
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER).text
+
+    assert "3 quality warnings: PO token, signature challenge" in page
+    assert "<details" in page

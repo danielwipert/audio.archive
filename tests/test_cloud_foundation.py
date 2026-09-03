@@ -224,3 +224,20 @@ def test_a_package_request_is_summarized_as_the_package_preset() -> None:
     )
 
     assert request.resolved_profile() is CloudProfile.PACKAGE
+
+
+def test_the_token_server_runs_with_the_permissions_upstream_grants() -> None:
+    """Mirrors the ENTRYPOINT of the BgUtils server image: env, net, and ffi plus read
+    scoped to node_modules. A wider grant would hand a network service more of the
+    worker than it needs."""
+
+    from audio_archive.cloud.runtime import bgutil_server_command
+
+    home = Path("/app/tools/bgutil-ytdlp-pot-provider/server")
+    command = bgutil_server_command(home, "deno", 4416)
+
+    assert command[:4] == ("deno", "run", "--allow-env", "--allow-net")
+    assert f"--allow-ffi={home / 'node_modules'}" in command
+    assert f"--allow-read={home / 'node_modules'}" in command
+    assert command[-3:] == (str(home / "src" / "main.ts"), "--port", "4416")
+    assert not any(argument in {"-A", "--allow-all", "--allow-write"} for argument in command)

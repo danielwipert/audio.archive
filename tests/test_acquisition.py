@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
@@ -291,3 +292,60 @@ class AcquisitionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PotProviderTests(unittest.TestCase):
+    def test_http_mode_points_at_the_server_and_needs_no_local_script(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                make_config(root),
+                pot_provider="http",
+                pot_http_base_url="http://127.0.0.1:4416",
+            )
+            service = AcquisitionService(config, FakeRunner())
+
+            assert service._pot_extractor_arg() == (
+                "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416"
+            )
+
+    def test_script_mode_uses_the_installed_provider(self) -> None:
+        with TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            service = AcquisitionService(config, FakeRunner())
+            server = config.tools_directory / "bgutil-ytdlp-pot-provider" / "server"
+
+            assert service._pot_extractor_arg() == (
+                f"youtubepot-bgutilscript:server_home={server}"
+            )
+
+    def test_script_mode_refuses_to_run_without_the_provider(self) -> None:
+        with TemporaryDirectory() as directory:
+            config = make_config(Path(directory))
+            entry = (
+                config.tools_directory
+                / "bgutil-ytdlp-pot-provider"
+                / "server"
+                / "src"
+                / "main.ts"
+            )
+            entry.unlink()
+
+            with self.assertRaises(FileNotFoundError):
+                AcquisitionService(config, FakeRunner())._pot_extractor_arg()
+
+    def test_http_mode_does_not_need_the_provider_installed_locally(self) -> None:
+        with TemporaryDirectory() as directory:
+            config = replace(make_config(Path(directory)), pot_provider="http")
+            entry = (
+                config.tools_directory
+                / "bgutil-ytdlp-pot-provider"
+                / "server"
+                / "src"
+                / "main.ts"
+            )
+            entry.unlink()
+
+            assert AcquisitionService(config, FakeRunner())._pot_extractor_arg().startswith(
+                "youtubepot-bgutilhttp:base_url="
+            )

@@ -282,6 +282,24 @@ class AcquisitionService:
         self.config = config
         self.runner = runner
 
+    def _pot_extractor_arg(self) -> str:
+        """Point yt-dlp at whichever BgUtils provider this deployment runs.
+
+        The script provider fetches YouTube's homepage itself for every token, which a
+        slow egress path can fail inside the provider's fixed timeout. The HTTP server
+        reuses the page yt-dlp already fetched and keeps its session warm, so a
+        deployment behind a proxy prefers it.
+        """
+
+        if self.config.pot_provider == "http":
+            return f"youtubepot-bgutilhttp:base_url={self.config.pot_http_base_url}"
+        server = self.config.tools_directory / BGUTIL_PROVIDER_DIRECTORY / "server"
+        if not (server / "src" / "main.ts").is_file():
+            raise FileNotFoundError(
+                "YouTube PO token provider is not installed. Run scripts\\setup.ps1 again."
+            )
+        return f"youtubepot-bgutilscript:server_home={server}"
+
     def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
         request.validate()
         item_directory = self.config.archive_root / "items" / "youtube" / request.video_id
@@ -297,12 +315,7 @@ class AcquisitionService:
         ffmpeg = resolve_tool(self.config.ffmpeg, self.config.tools_directory)
         ffprobe = resolve_tool(self.config.ffprobe, self.config.tools_directory)
         deno = resolve_tool(self.config.deno, self.config.tools_directory)
-        bgutil_server = self.config.tools_directory / BGUTIL_PROVIDER_DIRECTORY / "server"
-        bgutil_entry = bgutil_server / "src" / "main.ts"
-        if not bgutil_entry.is_file():
-            raise FileNotFoundError(
-                "YouTube PO token provider is not installed. Run scripts\\setup.ps1 again."
-            )
+        pot_extractor_arg = self._pot_extractor_arg()
 
         job_temp = self.config.temp_directory / str(request.job_id)
         job_temp.mkdir(parents=True, exist_ok=True)
@@ -339,7 +352,7 @@ class AcquisitionService:
             "--js-runtimes",
             f"deno:{deno}",
             "--extractor-args",
-            f"youtubepot-bgutilscript:server_home={bgutil_server}",
+            pot_extractor_arg,
             "--paths",
             str(job_temp),
             "--output",

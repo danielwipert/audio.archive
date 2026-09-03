@@ -85,7 +85,12 @@
   <h2>Request & source</h2>
   <p class="meta">Requested URL</p><p class="mono">{{ view.job.requested_url or "Resolver search" }}</p>
   <p class="meta">Resolved source</p><p>{{ view.job.source_creator or "—" }}{% if view.job.source_title %} · {{ view.job.source_title }}{% endif %}</p>
-  {% if view.job.warning_summary %}<p class="notice">{{ view.job.warning_summary }}</p>{% endif %}
+  {% if view.job.warnings %}
+  <details class="notice">
+    <summary>{{ view.job.warnings.count }} quality warning{% if view.job.warnings.count != 1 %}s{% endif %}: {{ view.job.warnings.categories|join(', ') }}</summary>
+    <p class="mono" style="margin-top:10px;white-space:pre-wrap">{{ view.job.warnings.detail }}</p>
+  </details>
+  {% endif %}
 </section>
 <section class="panel" style="grid-column:span 6">
   <h2>History</h2>
