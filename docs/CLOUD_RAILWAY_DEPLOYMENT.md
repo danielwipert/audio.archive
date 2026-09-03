@@ -86,6 +86,7 @@ AUDIO_ARCHIVE_WORKER_POLL_SECONDS=2
 AUDIO_ARCHIVE_CLEANUP_INTERVAL_SECONDS=300
 AUDIO_ARCHIVE_ACCESS_RETRY_LIMIT=3
 AUDIO_ARCHIVE_ACCESS_RETRY_BASE_SECONDS=300
+AUDIO_ARCHIVE_SCRATCH_RETENTION_HOURS=6
 ```
 
 A rate-limited, challenged, forbidden or token-failed acquisition is requeued
@@ -115,7 +116,20 @@ The worker:
 - uses the existing acquisition and Ableton services;
 - polls continuously when the queue is empty;
 - cleans expired R2 deliveries periodically; and
-- removes each ephemeral job workspace after processing.
+- removes each job workspace once its outputs are published.
+
+A failed attempt keeps its workspace so the next attempt can reuse whatever it
+verified, which is usually the acquired source master. That saves the download on
+a retry, and matters most for long items and for the automatic retries after a
+rate-limited acquisition. Only a published archive item is reused, and only after
+it re-verifies against its own checksums; job temporary files are always cleared,
+because a partial download cannot be distinguished from a complete one by
+inspection.
+
+Retained workspaces therefore hold roughly one source master per failed job until
+the sweep reclaims them, which it does when the job reaches a terminal state or
+after `AUDIO_ARCHIVE_SCRATCH_RETENTION_HOURS`. Lower that value if worker disk is
+tight; raise it to keep failed-job diagnostics around for longer.
 
 ## Container toolchain
 

@@ -182,3 +182,29 @@ would need its own decision rather than a checkbox.
 All requested formats are created in one conversion stage from the single verified
 source master. Asking for three files is one acquisition and one pass over that
 master, never three trips through the queue.
+
+## DEC-014 — Scratch reuse boundary
+
+- **Status:** Accepted
+- **Date:** 2026-09-03
+
+A cloud job's scratch workspace is keyed on the job rather than on the worker
+claim, and a failed attempt keeps it. The next attempt reuses what the previous
+one proved instead of starting from an empty directory. This is the recovery
+behaviour CLOUD_SPEC section 18.1 asks for, and it matters most now that a
+rate-limited acquisition retries itself.
+
+The durable boundary is the atomically published archive item, because it is the
+only artifact that carries its own manifest and checksums and can therefore be
+re-verified independently. An item is reused only when it re-verifies; one that
+does not is deleted and re-acquired.
+
+Job temporary files are always cleared. A partial download or a half-written
+derivative cannot be distinguished from a complete one by inspection, so
+resuming one would mean trusting a file for existing. yt-dlp resume across
+attempts is given up deliberately: the expensive thing to repeat is a completed,
+verified acquisition, and that is what reuse now preserves.
+
+Retained workspaces are removed when the job reaches a terminal state, or after a
+configurable retention window, so failed-job diagnostics do not accumulate
+indefinitely on worker disk.
