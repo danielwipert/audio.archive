@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
 from ..inputs import CsvPreview, CsvPreviewStore
+from ..warnings import classify_warnings
 from .auth import (
     AccessIdentity,
     AccessVerifier,
@@ -56,6 +57,42 @@ REQUESTED_LABELS = {
     "listen": "MP3",
     "package": "Archive package",
 }
+
+
+WARNING_CATEGORY_LABELS = {
+    "javascript_runtime": "JavaScript runtime",
+    "challenge": "signature challenge",
+    "po_token": "PO token",
+    "authentication": "authentication",
+    "format": "format availability",
+    "region": "region restriction",
+    "throttling": "rate limiting",
+    "other": "other",
+}
+
+
+def _warning_view(summary: str | None) -> dict[str, object] | None:
+    """Summarize the recorded quality warnings, keeping the detail available.
+
+    Tool output is long and repetitive; pasting it whole says less than naming the
+    conditions it describes. The full text stays behind a disclosure so a diagnosis
+    loses nothing.
+    """
+
+    text = (summary or "").strip()
+    if not text:
+        return None
+    warnings = classify_warnings("", text.replace("; ", "\n"))
+    categories: list[str] = []
+    for warning in warnings:
+        label = WARNING_CATEGORY_LABELS.get(warning.category, warning.category)
+        if label not in categories:
+            categories.append(label)
+    return {
+        "count": len(warnings) or 1,
+        "categories": categories or [WARNING_CATEGORY_LABELS["other"]],
+        "detail": text,
+    }
 
 
 def _output_label(role: str, filename: str) -> str:
@@ -485,6 +522,7 @@ def _job_payload(row: dict[str, object]) -> dict[str, object]:
         "source_creator": row["source_creator"],
         "quality_status": row["quality_status"],
         "warning_summary": row["warning_summary"],
+        "warnings": _warning_view(row["warning_summary"]),
         "error_stage": row["error_stage"],
         "error_class": row["error_class"],
         "error_summary": row["error_summary"],
