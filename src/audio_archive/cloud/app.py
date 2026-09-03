@@ -20,9 +20,25 @@ from .auth import (
 )
 from .db import CloudDatabase
 from .delivery import DeliveryRepository, DeliveryUnavailable, TemporaryDeliveryService
-from .models import CloudJobRequest, CloudProfile, DeliveryState, ProcessingState, display_status
+from .models import (
+    CloudJobRequest,
+    CloudOutput,
+    CloudProfile,
+    DeliveryState,
+    ProcessingState,
+    display_status,
+)
 from .storage import R2DeliveryStorage
 from .web_repository import CloudWebRepository, JobView, format_timestamp
+
+
+OUTPUT_LABELS = {
+    "source": "Native source master",
+    "ableton": "Ableton WAV, 32-bit float",
+    "wav24": "Standard WAV, 24-bit",
+    "listen": "MP3 listening copy",
+    "package": "Archive package",
+}
 
 
 @dataclass(frozen=True)
@@ -145,11 +161,20 @@ def create_cloud_app(
         version: str | None = Form(default=None),
         url: str | None = Form(default=None),
         profile: str = Form(default="ableton"),
+        outputs: list[str] = Form(default=[]),
+        output_choice: str = Form(default=""),
     ):
         identity = _identity(request)
         _verify_csrf(csrf, csrf_token, identity)
         try:
             limiter.check(identity)
+            # Unchecking every box posts no outputs at all, so the form sends a marker:
+            # with it, an empty set means source-only; without it, the preset still applies.
+            selected = (
+                frozenset(CloudOutput(value) for value in outputs)
+                if output_choice == "explicit"
+                else None
+            )
             cloud_profile = CloudProfile(profile)
             origin = "url" if url and url.strip() else "manual"
             job_id = database.create_job(
@@ -160,6 +185,7 @@ def create_cloud_app(
                     url=_optional(url),
                     profile=cloud_profile,
                     origin=origin,
+                    outputs=selected,
                 )
             )
         except (PermissionError, ValueError) as exc:
@@ -299,6 +325,7 @@ def _job_payload(row: dict[str, object]) -> dict[str, object]:
         "version": row["requested_version"],
         "requested_url": row["requested_url"],
         "profile": row["profile"],
+        "requested_outputs": list(row["requested_outputs"] or ()),
         "source_title": row["source_title"],
         "source_creator": row["source_creator"],
         "quality_status": row["quality_status"],
@@ -327,6 +354,7 @@ def _view_payload(view: JobView) -> dict[str, object]:
                 "filename": row["filename"],
                 "content_type": row["content_type"],
                 "size_bytes": int(row["size_bytes"]),
+                "label": OUTPUT_LABELS.get(str(row["role"]), str(row["role"])),
                 "sha256": row["sha256"],
                 "expires_at": format_timestamp(row["expires_at_utc"]),
                 "deleted": deleted,

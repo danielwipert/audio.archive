@@ -95,10 +95,18 @@ def make_archive_item(config: AppConfig, *, duration_seconds: float) -> tuple[Pa
 
 
 class AbletonRunner:
-    def __init__(self, duration_seconds: float, *, sample_rate_hz: int = 48000, channels: int = 2):
+    def __init__(
+        self,
+        duration_seconds: float,
+        *,
+        sample_rate_hz: int = 48000,
+        channels: int = 2,
+        output_codec: str = "pcm_f32le",
+    ):
         self.duration_seconds = duration_seconds
         self.sample_rate_hz = sample_rate_hz
         self.channels = channels
+        self.output_codec = output_codec
         self.commands: list[tuple[str, ...]] = []
         self.output_samples: dict[str, int] = {}
 
@@ -144,7 +152,7 @@ class AbletonRunner:
             sample_count = self.output_samples.get(
                 media.name, round(self.duration_seconds * self.sample_rate_hz)
             )
-            codec = "pcm_f32le" if is_output else "opus"
+            codec = self.output_codec if is_output else "opus"
             format_name = "wav" if is_output else "matroska,webm"
             return self._result(
                 command,

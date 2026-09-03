@@ -10,6 +10,8 @@ from audio_archive.cloud.config import CloudSettings
 from audio_archive.cloud.execution import classify_job_error
 from audio_archive.cloud.models import (
     AccessRetryPolicy,
+    CloudJobRequest,
+    CloudOutput,
     CloudProfile,
     DeliveryState,
     ProcessingState,
@@ -186,4 +188,39 @@ def test_expected_migration_versions_tracks_the_shipped_files() -> None:
     root = Path(__file__).resolve().parents[1]
     versions = expected_migration_versions(root / "migrations")
 
-    assert versions == {1, 2}
+    assert versions == {1, 2, 3}
+
+
+def test_a_preset_still_decides_the_outputs_when_none_are_chosen() -> None:
+    assert CloudJobRequest(url="https://youtu.be/x").resolved_outputs() == frozenset(
+        {CloudOutput.ABLETON}
+    )
+    assert CloudJobRequest(
+        url="https://youtu.be/x", profile=CloudProfile.SOURCE
+    ).resolved_outputs() == frozenset()
+    assert CloudJobRequest(
+        url="https://youtu.be/x", profile=CloudProfile.PACKAGE
+    ).resolved_outputs() == frozenset({CloudOutput.ABLETON, CloudOutput.PACKAGE})
+
+
+def test_an_explicit_choice_wins_and_is_summarized_as_a_preset() -> None:
+    chosen = frozenset({CloudOutput.WAV24, CloudOutput.LISTEN})
+    request = CloudJobRequest(url="https://youtu.be/x", outputs=chosen)
+
+    assert request.resolved_outputs() == chosen
+    assert request.resolved_profile() is CloudProfile.ABLETON
+
+
+def test_choosing_nothing_means_the_source_master_alone() -> None:
+    request = CloudJobRequest(url="https://youtu.be/x", outputs=frozenset())
+
+    assert request.resolved_outputs() == frozenset()
+    assert request.resolved_profile() is CloudProfile.SOURCE
+
+
+def test_a_package_request_is_summarized_as_the_package_preset() -> None:
+    request = CloudJobRequest(
+        url="https://youtu.be/x", outputs=frozenset({CloudOutput.PACKAGE})
+    )
+
+    assert request.resolved_profile() is CloudProfile.PACKAGE

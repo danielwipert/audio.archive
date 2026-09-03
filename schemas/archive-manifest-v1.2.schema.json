@@ -17,44 +17,136 @@
     "derivatives"
   ],
   "properties": {
-    "schema_version": { "const": "1.2" },
-    "archive_id": { "type": "string", "pattern": "^[a-z0-9_-]+:[A-Za-z0-9_-]+$" },
+    "schema_version": {
+      "const": "1.2"
+    },
+    "archive_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+:[A-Za-z0-9_-]+$"
+    },
     "content_type": {
       "type": "string",
-      "enum": ["song", "dj_set", "lecture", "interview", "other"]
+      "enum": [
+        "song",
+        "dj_set",
+        "lecture",
+        "interview",
+        "other"
+      ]
     },
-    "request": { "$ref": "#/$defs/request" },
-    "resolution": { "$ref": "#/$defs/resolution" },
-    "source": { "$ref": "#/$defs/source" },
-    "acquisition": { "$ref": "#/$defs/acquisition" },
-    "source_master": { "$ref": "#/$defs/asset" },
+    "request": {
+      "$ref": "#/$defs/request"
+    },
+    "resolution": {
+      "$ref": "#/$defs/resolution"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "acquisition": {
+      "$ref": "#/$defs/acquisition"
+    },
+    "source_master": {
+      "$ref": "#/$defs/asset"
+    },
     "intermediates": {
       "type": "array",
-      "items": { "$ref": "#/$defs/asset" }
+      "items": {
+        "$ref": "#/$defs/asset"
+      }
     },
     "derivatives": {
       "type": "array",
-      "items": { "$ref": "#/$defs/asset" }
+      "items": {
+        "$ref": "#/$defs/asset"
+      }
     }
   },
   "$defs": {
     "request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["origin", "profile"],
+      "required": [
+        "origin",
+        "profile"
+      ],
       "properties": {
-        "artist": { "type": ["string", "null"] },
-        "title": { "type": ["string", "null"] },
-        "version": { "type": ["string", "null"] },
-        "url": { "type": ["string", "null"], "format": "uri" },
+        "artist": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri"
+        },
         "profile": {
           "type": "string",
-          "enum": ["ableton", "archive", "listen", "complete"]
+          "enum": [
+            "ableton",
+            "archive",
+            "listen",
+            "complete",
+            "source",
+            "package"
+          ],
+          "description": "Local service profile, or the Cloud v0.1 preset summarizing the requested outputs."
         },
-        "origin": { "type": "string", "enum": ["manual", "url", "csv", "cli"] },
-        "import_filename": { "type": ["string", "null"] },
-        "import_file_sha256": { "$ref": "#/$defs/nullableSha256" },
-        "import_row": { "type": ["integer", "null"], "minimum": 2 }
+        "origin": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "url",
+            "csv",
+            "cli"
+          ]
+        },
+        "import_filename": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "import_file_sha256": {
+          "$ref": "#/$defs/nullableSha256"
+        },
+        "import_row": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 2
+        },
+        "cloud_outputs": {
+          "type": "array",
+          "description": "Formats a cloud job asked for beyond the always-published source master. Absent for locally created items.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ableton",
+              "wav24",
+              "listen",
+              "package"
+            ]
+          },
+          "uniqueItems": true
+        }
       }
     },
     "resolution": {
@@ -69,26 +161,78 @@
       "properties": {
         "method": {
           "type": "string",
-          "enum": ["automatic", "manual_selection", "exact_url"]
+          "enum": [
+            "automatic",
+            "manual_selection",
+            "exact_url"
+          ]
         },
-        "resolver_version": { "type": "string" },
-        "selected_score": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
-        "runner_up_score": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
-        "selected_video_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{11}$" },
-        "reviewed_by_user": { "type": "boolean" }
+        "resolver_version": {
+          "type": "string"
+        },
+        "selected_score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "runner_up_score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "selected_video_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{11}$"
+        },
+        "reviewed_by_user": {
+          "type": "boolean"
+        }
       }
     },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["platform", "id", "url", "title", "creator"],
+      "required": [
+        "platform",
+        "id",
+        "url",
+        "title",
+        "creator"
+      ],
       "properties": {
-        "platform": { "const": "youtube" },
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{11}$" },
-        "url": { "type": "string", "format": "uri" },
-        "title": { "type": "string" },
-        "creator": { "type": ["string", "null"] },
-        "duration_seconds": { "type": ["number", "null"], "minimum": 0 }
+        "platform": {
+          "const": "youtube"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{11}$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "title": {
+          "type": "string"
+        },
+        "creator": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
       }
     },
     "acquisition": {
@@ -103,7 +247,10 @@
         "quality_warnings"
       ],
       "properties": {
-        "acquired_at_utc": { "type": "string", "format": "date-time" },
+        "acquired_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
         "quality_status": {
           "type": "string",
           "enum": [
@@ -113,44 +260,150 @@
             "failed"
           ]
         },
-        "yt_dlp_version": { "type": "string" },
-        "ffmpeg_version": { "type": "string" },
-        "ffprobe_version": { "type": "string" },
-        "deno_version": { "type": ["string", "null"] },
-        "quality_warnings": { "type": "array", "items": { "type": "string" } },
-        "used_combined_fallback": { "type": "boolean" }
+        "yt_dlp_version": {
+          "type": "string"
+        },
+        "ffmpeg_version": {
+          "type": "string"
+        },
+        "ffprobe_version": {
+          "type": "string"
+        },
+        "deno_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quality_warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "used_combined_fallback": {
+          "type": "boolean"
+        }
       }
     },
     "asset": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["role", "path", "sha256"],
+      "required": [
+        "role",
+        "path",
+        "sha256"
+      ],
       "properties": {
-        "role": { "type": "string" },
-        "path": { "type": "string", "minLength": 1 },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "source_sha256": { "$ref": "#/$defs/nullableSha256" },
-        "container": { "type": ["string", "null"] },
-        "audio_codec": { "type": ["string", "null"] },
-        "audio_format": { "type": ["string", "null"] },
-        "format_id": { "type": ["string", "null"] },
-        "is_drc": { "type": ["boolean", "null"] },
-        "reported_bitrate_kbps": { "type": ["number", "null"], "minimum": 0 },
-        "sample_rate_hz": { "type": ["integer", "null"], "minimum": 1 },
-        "channels": { "type": ["integer", "null"], "minimum": 1, "maximum": 2 },
-        "normalization": { "type": "boolean" },
-        "resampled": { "type": "boolean" },
-        "dithered": { "type": "boolean" },
-        "segment_index": { "type": ["integer", "null"], "minimum": 1 },
-        "start_sample": { "type": ["integer", "null"], "minimum": 0 },
-        "end_sample": { "type": ["integer", "null"], "minimum": 0 }
+        "role": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/nullableSha256"
+        },
+        "container": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "audio_codec": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "audio_format": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_drc": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "reported_bitrate_kbps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sample_rate_hz": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "channels": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2
+        },
+        "normalization": {
+          "type": "boolean"
+        },
+        "resampled": {
+          "type": "boolean"
+        },
+        "dithered": {
+          "type": "boolean"
+        },
+        "segment_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "start_sample": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "end_sample": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
       }
     },
-    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
     "nullableSha256": {
       "anyOf": [
-        { "$ref": "#/$defs/sha256" },
-        { "type": "null" }
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   }

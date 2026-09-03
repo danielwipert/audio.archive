@@ -3,31 +3,59 @@ from __future__ import annotations
 import json
 import mimetypes
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 from zipfile import ZIP_STORED, ZipFile
 
-from ..ableton import AbletonResult, AbletonService
+from ..ableton import AbletonService, PcmResult
 from ..acquisition import AcquisitionRequest, AcquisitionResult, AcquisitionService
 from ..config import AppConfig
 from ..integrity import listed_checksum_paths, verify_sha256sums, write_sha256sums
 from ..manifest import write_manifest_atomic
+from ..listening import ListeningResult, ListeningService
 from ..resolver import decide_resolution
 from ..source_resolution import search_youtube_candidates
 from ..tooling import CommandRunner
 from ..verify import sha256_file
+from ..wav24 import Wav24Service
 from .config import CloudSettings
 from .db import CloudDatabase, LostWorkerClaim
 from .delivery import TemporaryDeliveryService
 from .execution import CloudExecutionRepository, classify_job_error
-from .models import CloudProfile, ProcessingState, WorkerClaim
+from .models import CloudOutput, CloudProfile, ProcessingState, WorkerClaim
 from .workspace import CloudWorkspace
 
 
 class HeartbeatGuard(Protocol):
     def check(self) -> None: ...
+
+
+CONVERSION_ORDER: tuple[CloudOutput, ...] = (
+    CloudOutput.ABLETON,
+    CloudOutput.WAV24,
+    CloudOutput.LISTEN,
+)
+
+CONVERSION_LABELS = {
+    CloudOutput.ABLETON: "Ableton 32-bit float WAV",
+    CloudOutput.WAV24: "24-bit WAV",
+    CloudOutput.LISTEN: "listening MP3",
+}
+
+
+@dataclass(frozen=True)
+class Conversions:
+    """Whatever this job asked the worker to make from its verified source master."""
+
+    ableton: PcmResult | None = None
+    wav24: PcmResult | None = None
+    listening: ListeningResult | None = None
+
+
+def _requested_outputs(job: dict[str, object]) -> frozenset[CloudOutput]:
+    return frozenset(CloudOutput(str(value)) for value in (job.get("requested_outputs") or ()))
 
 
 @dataclass(frozen=True)
@@ -50,6 +78,8 @@ class CloudJobProcessor:
         delivery: TemporaryDeliveryService,
         acquisition_factory: Callable[[AppConfig, CommandRunner], AcquisitionService] = AcquisitionService,
         ableton_factory: Callable[[AppConfig, CommandRunner], AbletonService] = AbletonService,
+        wav24_factory: Callable[[AppConfig, CommandRunner], Wav24Service] = Wav24Service,
+        listening_factory: Callable[[AppConfig, CommandRunner], ListeningService] = ListeningService,
     ) -> None:
         self.database = database
         self.settings = settings
@@ -59,6 +89,8 @@ class CloudJobProcessor:
         self.execution = CloudExecutionRepository(database)
         self.acquisition_factory = acquisition_factory
         self.ableton_factory = ableton_factory
+        self.wav24_factory = wav24_factory
+        self.listening_factory = listening_factory
 
     def process_claim(
         self,
@@ -92,23 +124,23 @@ class CloudJobProcessor:
             workspace.prepare()
             local_config = workspace.local_config(self.base_config)
             profile = CloudProfile(str(job["profile"]))
+            requested = _requested_outputs(job)
             acquisition = self._acquire(
                 job,
                 profile=profile,
                 local_config=local_config,
                 heartbeat=heartbeat,
             )
-            ableton: AbletonResult | None = None
+            conversions = self._convert(
+                job_id=claim.job_id,
+                requested=requested,
+                acquisition=acquisition,
+                local_config=local_config,
+                heartbeat=heartbeat,
+            )
             package_path: Path | None = None
 
-            if profile in {CloudProfile.ABLETON, CloudProfile.PACKAGE}:
-                ableton = self._create_ableton(
-                    job_id=claim.job_id,
-                    acquisition=acquisition,
-                    local_config=local_config,
-                    heartbeat=heartbeat,
-                )
-            if profile is CloudProfile.PACKAGE:
+            if CloudOutput.PACKAGE in requested:
                 self.database.transition_processing(
                     claim.job_id,
                     ProcessingState.PACKAGING,
@@ -130,7 +162,7 @@ class CloudJobProcessor:
             output_ids = self._publish(
                 job_id=claim.job_id,
                 acquisition=acquisition,
-                ableton=ableton,
+                conversions=conversions,
                 package_path=package_path,
                 heartbeat=heartbeat,
             )
@@ -260,7 +292,11 @@ class CloudJobProcessor:
                 reviewed_by_user=str(job.get("resolution_method") or "").startswith("manual"),
             )
         )
-        _set_cloud_manifest_profile(result.item_directory, profile.value)
+        _set_cloud_manifest_profile(
+            result.item_directory,
+            profile.value,
+            _requested_outputs(job),
+        )
         heartbeat.check()
         self.database.transition_processing(
             job_id,
@@ -276,37 +312,71 @@ class CloudJobProcessor:
         )
         return result
 
-    def _create_ableton(
+    def _convert(
         self,
         *,
         job_id: int,
+        requested: frozenset[CloudOutput],
         acquisition: AcquisitionResult,
         local_config: AppConfig,
         heartbeat: HeartbeatGuard,
-    ) -> AbletonResult:
+    ) -> Conversions:
+        """Create every requested derivative from the one verified source master.
+
+        All conversions run inside a single converting stage and are verified together,
+        so asking for three formats stays one pass over the master rather than three
+        trips through the queue.
+        """
+
+        wanted = [output for output in CONVERSION_ORDER if output in requested]
+        if not wanted:
+            return Conversions()
+
         self.database.transition_processing(
             job_id,
             ProcessingState.CONVERTING,
-            message="Creating Ableton 32-bit float WAV from verified source master",
+            message="Creating "
+            + ", ".join(CONVERSION_LABELS[output] for output in wanted)
+            + " from the verified source master",
         )
-        result = self.ableton_factory(local_config, self.runner).create(
-            acquisition.item_directory,
-            job_id=job_id,
-        )
-        heartbeat.check()
+        conversions = Conversions()
+        for output in wanted:
+            if output is CloudOutput.ABLETON:
+                conversions = replace(
+                    conversions,
+                    ableton=self.ableton_factory(local_config, self.runner).create(
+                        acquisition.item_directory, job_id=job_id
+                    ),
+                )
+            elif output is CloudOutput.WAV24:
+                conversions = replace(
+                    conversions,
+                    wav24=self.wav24_factory(local_config, self.runner).create(
+                        acquisition.item_directory, job_id=job_id
+                    ),
+                )
+            else:
+                conversions = replace(
+                    conversions,
+                    listening=self.listening_factory(local_config, self.runner).create(
+                        acquisition.item_directory, job_id=job_id
+                    ),
+                )
+            heartbeat.check()
+
         self.database.transition_processing(
             job_id,
             ProcessingState.VERIFYING_OUTPUT,
-            message="Ableton output passed media and checksum verification",
+            message="Every requested output passed media and checksum verification",
         )
-        return result
+        return conversions
 
     def _publish(
         self,
         *,
         job_id: int,
         acquisition: AcquisitionResult,
-        ableton: AbletonResult | None,
+        conversions: Conversions,
         package_path: Path | None,
         heartbeat: HeartbeatGuard,
     ) -> list[int]:
@@ -346,13 +416,15 @@ class CloudJobProcessor:
                 )
             )
 
-        if ableton is not None:
-            for asset in ableton.assets:
+        for pcm in (conversions.ableton, conversions.wav24):
+            if pcm is None:
+                continue
+            for asset in pcm.assets:
                 heartbeat.check()
                 output_ids.append(
                     self.delivery.publish_file(
                         job_id=job_id,
-                        role="ableton",
+                        role=asset.role,
                         path=asset.path,
                         filename=asset.path.name,
                         content_type="audio/wav",
@@ -360,7 +432,7 @@ class CloudJobProcessor:
                         published_at_utc=published_at,
                         expires_at_utc=expires_at,
                         media_properties={
-                            "audio_format": "pcm_f32le",
+                            "audio_format": asset.audio_format,
                             "sample_rate_hz": asset.sample_rate_hz,
                             "channels": asset.channels,
                             "sample_count": asset.sample_count,
@@ -370,6 +442,30 @@ class CloudJobProcessor:
                         },
                     )
                 )
+
+        if conversions.listening is not None:
+            asset = conversions.listening.asset
+            heartbeat.check()
+            output_ids.append(
+                self.delivery.publish_file(
+                    job_id=job_id,
+                    role="listen",
+                    path=asset.path,
+                    filename=asset.path.name,
+                    content_type="audio/mpeg",
+                    expected_sha256=asset.sha256,
+                    published_at_utc=published_at,
+                    expires_at_utc=expires_at,
+                    media_properties={
+                        "audio_format": "mp3",
+                        "sample_rate_hz": asset.sample_rate_hz,
+                        "channels": asset.channels,
+                        "bitrate_bps": asset.bitrate_bps,
+                        "title": asset.title,
+                        "artist": asset.artist,
+                    },
+                )
+            )
 
         if package_path is not None:
             heartbeat.check()
@@ -429,8 +525,17 @@ class CloudJobProcessor:
                 continue
 
 
-def _set_cloud_manifest_profile(item_directory: Path, cloud_profile: str) -> None:
-    """Replace the local service profile alias with the Cloud v0.1 profile name."""
+def _set_cloud_manifest_profile(
+    item_directory: Path,
+    cloud_profile: str,
+    requested: frozenset[CloudOutput],
+) -> None:
+    """Record what the cloud job actually asked for, in the item's durable provenance.
+
+    The local services write their own profile alias during acquisition. The manifest
+    keeps the Cloud v0.1 preset name and, because a preset no longer describes the
+    choice on its own, the exact set of requested outputs beside it.
+    """
 
     manifest_path = item_directory / "metadata" / "archive.json"
     checksum_paths = listed_checksum_paths(item_directory)
@@ -443,9 +548,11 @@ def _set_cloud_manifest_profile(item_directory: Path, cloud_profile: str) -> Non
     request = manifest.get("request")
     if not isinstance(request, dict):
         raise ValueError("Archive manifest has no request metadata")
-    if request.get("profile") == cloud_profile:
+    outputs = sorted(output.value for output in requested)
+    if request.get("profile") == cloud_profile and request.get("cloud_outputs") == outputs:
         return
     request["profile"] = cloud_profile
+    request["cloud_outputs"] = outputs
     write_manifest_atomic(manifest_path, manifest)
     write_sha256sums(item_directory, checksum_paths)
     integrity = verify_sha256sums(item_directory)

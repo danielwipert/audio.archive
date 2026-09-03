@@ -28,6 +28,10 @@
     .button.secondary,button.secondary { background:#ece9e2; color:var(--ink); }
     .button.danger,button.danger { background:var(--bad); }
     .actions { display:flex; flex-wrap:wrap; gap:9px; align-items:center; margin-top:18px; }
+    .choices { display:grid; gap:8px; }
+    .choice { display:flex; align-items:baseline; gap:9px; margin:0; padding:9px 11px; border:1px solid #cbc6bc; border-radius:8px; background:#fff; font-size:14px; font-weight:400; letter-spacing:0; text-transform:none; color:var(--ink); cursor:pointer; }
+    .choice input { width:auto; flex:0 0 auto; }
+    .choice .hint { color:#6a6a6a; font-size:12.5px; }
     .stats { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; }
     .stat { padding:14px; border:1px solid var(--line); border-radius:9px; }
     .stat strong { display:block; font:500 28px/1 Georgia, serif; } .stat span { color:var(--muted); font-size:12px; }

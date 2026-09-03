@@ -35,9 +35,39 @@ class DeliveryState(StrEnum):
 
 
 class CloudProfile(StrEnum):
+    """Coarse preset kept for provenance and for the dashboard's summary column."""
+
     ABLETON = "ableton"
     SOURCE = "source"
     PACKAGE = "package"
+
+
+class CloudOutput(StrEnum):
+    """A downloadable file the user can ask a job to produce.
+
+    The verified source master and its sidecars are always published, so they are not
+    part of this set: everything here is made from that master after it is verified.
+    """
+
+    ABLETON = "ableton"
+    WAV24 = "wav24"
+    LISTEN = "listen"
+    PACKAGE = "package"
+
+
+PROFILE_OUTPUT_PRESETS: dict[CloudProfile, frozenset[CloudOutput]] = {
+    CloudProfile.ABLETON: frozenset({CloudOutput.ABLETON}),
+    CloudProfile.SOURCE: frozenset(),
+    CloudProfile.PACKAGE: frozenset({CloudOutput.ABLETON, CloudOutput.PACKAGE}),
+}
+
+
+def profile_for_outputs(outputs: frozenset[CloudOutput]) -> CloudProfile:
+    """Summarize a chosen set as the closest preset, for provenance and display."""
+
+    if CloudOutput.PACKAGE in outputs:
+        return CloudProfile.PACKAGE
+    return CloudProfile.ABLETON if outputs else CloudProfile.SOURCE
 
 
 class WorkerNetworkClass(StrEnum):
@@ -56,6 +86,17 @@ class CloudJobRequest:
     origin: str = "manual"
     import_id: int | None = None
     import_row: int | None = None
+    outputs: frozenset[CloudOutput] | None = None
+
+    def resolved_outputs(self) -> frozenset[CloudOutput]:
+        """The formats to build: the explicit choice, or the profile's preset."""
+
+        if self.outputs is None:
+            return PROFILE_OUTPUT_PRESETS[self.profile]
+        return frozenset(self.outputs)
+
+    def resolved_profile(self) -> CloudProfile:
+        return self.profile if self.outputs is None else profile_for_outputs(self.outputs)
 
     def validate(self) -> None:
         if not self.url and (not self.artist or not self.title):

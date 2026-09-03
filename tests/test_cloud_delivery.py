@@ -45,7 +45,7 @@ def delivery_db() -> CloudDatabase:
 
     database = CloudDatabase(dsn)
     root = Path(__file__).resolve().parents[1]
-    assert database.apply_migrations(root / "migrations") == [1, 2]
+    assert database.apply_migrations(root / "migrations") == [1, 2, 3]
     return database
 
 
