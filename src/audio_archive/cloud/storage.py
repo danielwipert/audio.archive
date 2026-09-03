@@ -11,8 +11,7 @@ from botocore.exceptions import ClientError
 
 from ..verify import sha256_file
 from .config import CloudSettings
-
-_ALLOWED_ROLES = {"source", "ableton", "package"}
+from .models import DELIVERY_ROLES
 
 
 @dataclass(frozen=True)
@@ -68,7 +67,7 @@ class R2DeliveryStorage:
     ) -> PublishedObject:
         if job_id <= 0:
             raise ValueError("job_id must be positive")
-        if role not in _ALLOWED_ROLES:
+        if role not in DELIVERY_ROLES:
             raise ValueError(f"Unsupported delivery role: {role}")
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -148,7 +147,7 @@ class R2DeliveryStorage:
 def object_key_for(*, job_id: int, role: str, sha256: str, suffix: str = "") -> str:
     if job_id <= 0:
         raise ValueError("job_id must be positive")
-    if role not in _ALLOWED_ROLES:
+    if role not in DELIVERY_ROLES:
         raise ValueError(f"Unsupported delivery role: {role}")
     digest = sha256.lower()
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
