@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 from audio_archive.cloud.app import (
     WebDependencies,
     _output_label,
+    _quality_label,
+    _status_label,
     _warning_view,
     create_cloud_app,
 )
@@ -28,7 +30,14 @@ from audio_archive.cloud.auth import (
 from audio_archive.cloud.db import CloudDatabase
 from audio_archive.cloud.runtime import expected_migration_versions
 from audio_archive.cloud.delivery import DeliveryRepository, TemporaryDeliveryService
-from audio_archive.cloud.models import CloudOutput, CloudJobRequest, CloudProfile, ProcessingState
+from audio_archive.cloud.models import (
+    CloudJobRequest,
+    CloudOutput,
+    CloudProfile,
+    DeliveryState,
+    ProcessingState,
+    display_status,
+)
 from audio_archive.cloud.storage import PublishedObject
 from audio_archive.cloud.web_repository import CloudWebRepository
 
@@ -765,6 +774,24 @@ def test_a_published_file_is_named_by_what_it_is() -> None:
     assert _output_label("source", "source-thumbnail.webp") == "Source artwork"
     assert _output_label("wav24", "x.wav") == "Standard WAV, 24-bit"
     assert _output_label("listen", "x.mp3") == "MP3 listening copy"
+
+
+def test_every_status_and_quality_value_has_a_plain_language_label() -> None:
+    """A friend reading the queue table should never see a raw enum value like
+    'needs_review' or 'best_available_with_warnings' - every value display_status()
+    or the acquisition pipeline can produce maps to something in plain language."""
+
+    for processing in ProcessingState:
+        for delivery in DeliveryState:
+            label = _status_label(display_status(processing, delivery))
+            assert label and "_" not in label
+
+    for quality in ("verified_best_available", "best_available_with_warnings", "fallback_source"):
+        label = _quality_label(quality)
+        assert label is not None and "_" not in label
+
+    assert _quality_label(None) is None
+    assert _quality_label("") is None
 
 
 def test_the_job_page_names_the_files_a_job_asked_for(
