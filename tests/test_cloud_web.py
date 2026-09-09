@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from audio_archive.cloud.app import (
     WebDependencies,
+    _error_view,
     _output_label,
     _quality_label,
     _status_label,
@@ -792,6 +793,30 @@ def test_every_status_and_quality_value_has_a_plain_language_label() -> None:
 
     assert _quality_label(None) is None
     assert _quality_label("") is None
+
+
+def test_a_processing_failure_shows_a_plain_language_headline() -> None:
+    """A friend seeing a failed job should read what happened, not a Python
+    exception name; the raw error_class and tool output move behind a disclosure."""
+
+    assert _error_view(error_class=None, error_stage=None, error_summary=None) is None
+    assert _error_view(error_class=None, error_stage=None, error_summary="") is None
+
+    view = _error_view(
+        error_class="SourceAccessBotCheck",
+        error_stage="downloading",
+        error_summary="ERROR: Sign in to confirm you're not a bot",
+    )
+    assert view["headline"] == "YouTube asked for a bot check"
+    assert view["stage_label"] == "Downloading"
+    assert "SourceAccessBotCheck" in view["detail"]
+    assert "Sign in to confirm" in view["detail"]
+
+    unknown = _error_view(
+        error_class="ValueError", error_stage="converting", error_summary="bad channel count"
+    )
+    assert unknown["headline"] == "Something went wrong while processing this job"
+    assert unknown["stage_label"] == "Converting"
 
 
 def test_the_job_page_names_the_files_a_job_asked_for(

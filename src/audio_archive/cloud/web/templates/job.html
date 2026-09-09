@@ -8,11 +8,14 @@
   <div class="actions"><span class="status {{ view.job.status }}">{{ view.job.status_label }}</span><span class="meta">Files: {{ view.job.requested_labels|join(', ') if view.job.requested_labels else "source master only" }}</span>{% if view.job.quality_label %}<span class="meta">Quality: {{ view.job.quality_label }}</span>{% endif %}</div>
 </section>
 
-{% if view.job.error_summary %}
+{% if view.job.error_view %}
 <section class="panel" style="margin-bottom:20px;border-left:4px solid var(--bad)">
   <h2>Processing failure</h2>
-  <p><strong>{{ view.job.error_class or "processing error" }}</strong>{% if view.job.error_stage %} · {{ view.job.error_stage }}{% endif %}</p>
-  <p class="mono">{{ view.job.error_summary }}</p>
+  <p><strong>{{ view.job.error_view.headline }}</strong>{% if view.job.error_view.stage_label %} · {{ view.job.error_view.stage_label }}{% endif %}</p>
+  <details class="notice">
+    <summary>Technical details</summary>
+    <p class="mono" style="margin-top:10px;white-space:pre-wrap">{{ view.job.error_view.detail }}</p>
+  </details>
   {% if view.job.processing_state in ["failed", "interrupted"] and view.job.delivery_state == "not_published" %}
   <form method="post" action="/jobs/{{ view.job.id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Retry job</button></form>
   {% endif %}
