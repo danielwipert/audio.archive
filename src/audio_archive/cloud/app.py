@@ -59,6 +59,45 @@ REQUESTED_LABELS = {
 }
 
 
+STATUS_LABELS = {
+    "pending": "Waiting to start",
+    "resolving": "Finding the song",
+    "needs_review": "Needs your input",
+    "ready": "Queued",
+    "downloading": "Downloading",
+    "verifying_master": "Checking the download",
+    "converting": "Converting",
+    "verifying_output": "Checking the files",
+    "packaging": "Packaging",
+    "publishing": "Finishing up",
+    "completed": "Done",
+    "completed_with_warnings": "Done, with warnings",
+    "failed": "Failed",
+    "interrupted": "Interrupted",
+    "skipped_duplicate": "Already archived",
+    "not_found": "Not found",
+    "cancelled": "Cancelled",
+    "ready_to_download": "Ready to download",
+    "files_expired": "Files expired",
+}
+
+QUALITY_LABELS = {
+    "verified_best_available": "Best quality",
+    "best_available_with_warnings": "Good quality, with warnings",
+    "fallback_source": "Lower-quality fallback",
+}
+
+
+def _status_label(status: str) -> str:
+    return STATUS_LABELS.get(status, status.replace("_", " "))
+
+
+def _quality_label(quality_status: object) -> str | None:
+    if not quality_status:
+        return None
+    return QUALITY_LABELS.get(str(quality_status), str(quality_status).replace("_", " "))
+
+
 WARNING_CATEGORY_LABELS = {
     "javascript_runtime": "JavaScript runtime",
     "challenge": "signature challenge",
@@ -505,9 +544,11 @@ def _optional(value: str | None) -> str | None:
 def _job_payload(row: dict[str, object]) -> dict[str, object]:
     processing = ProcessingState(str(row["processing_state"]))
     delivery = DeliveryState(str(row["delivery_state"]))
+    status = display_status(processing, delivery)
     return {
         "id": int(row["id"]),
-        "status": display_status(processing, delivery),
+        "status": status,
+        "status_label": _status_label(status),
         "processing_state": processing.value,
         "delivery_state": delivery.value,
         "artist": row["requested_artist"],
@@ -523,6 +564,7 @@ def _job_payload(row: dict[str, object]) -> dict[str, object]:
         "source_title": row["source_title"],
         "source_creator": row["source_creator"],
         "quality_status": row["quality_status"],
+        "quality_label": _quality_label(row["quality_status"]),
         "warning_summary": row["warning_summary"],
         "warnings": _warning_view(row["warning_summary"]),
         "error_stage": row["error_stage"],
