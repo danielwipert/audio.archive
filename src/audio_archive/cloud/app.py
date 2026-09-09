@@ -98,6 +98,38 @@ def _quality_label(quality_status: object) -> str | None:
     return QUALITY_LABELS.get(str(quality_status), str(quality_status).replace("_", " "))
 
 
+ERROR_CLASS_HEADLINES = {
+    "SourceAccessRateLimited": "YouTube is temporarily rate-limiting requests",
+    "SourceAccessBotCheck": "YouTube asked for a bot check",
+    "SourceAccessForbidden": "YouTube denied access to this video",
+    "SourceAccessTokenFailure": "A required verification step failed",
+    "SourceUnavailable": "This video isn't available (removed, private, or region-blocked)",
+    "WorkerLeaseExpired": "Processing was interrupted and needs to restart",
+    "LostWorkerClaim": "Processing was interrupted and needs to restart",
+}
+
+_DEFAULT_ERROR_HEADLINE = "Something went wrong while processing this job"
+
+
+def _error_view(
+    *, error_class: object, error_stage: object, error_summary: object
+) -> dict[str, object] | None:
+    """Summarize a processing failure, keeping the diagnostic detail available.
+
+    A friend seeing a raw Python exception name and tool output reads it as broken
+    software; the plain-language headline says what actually happened, and the
+    technical detail moves behind a disclosure so nothing is lost for debugging.
+    """
+
+    if not error_summary:
+        return None
+    return {
+        "headline": ERROR_CLASS_HEADLINES.get(str(error_class), _DEFAULT_ERROR_HEADLINE),
+        "stage_label": _status_label(str(error_stage)) if error_stage else None,
+        "detail": f"{error_class or 'Unknown error'}\n{error_summary}",
+    }
+
+
 WARNING_CATEGORY_LABELS = {
     "javascript_runtime": "JavaScript runtime",
     "challenge": "signature challenge",
@@ -570,6 +602,11 @@ def _job_payload(row: dict[str, object]) -> dict[str, object]:
         "error_stage": row["error_stage"],
         "error_class": row["error_class"],
         "error_summary": row["error_summary"],
+        "error_view": _error_view(
+            error_class=row["error_class"],
+            error_stage=row["error_stage"],
+            error_summary=row["error_summary"],
+        ),
         "retry_count": int(row["retry_count"]),
         "access_retry_count": int(row["access_retry_count"]),
         "retry_at": format_timestamp(row["retry_not_before_utc"]),
