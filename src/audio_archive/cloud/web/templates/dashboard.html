@@ -2,8 +2,8 @@
 {% block title %}Audio Archive · Queue{% endblock %}
 {% block content %}
 <section style="margin-bottom:28px">
-  <h1>Ingest audio from anywhere.</h1>
-  <p class="lede">Submit an exact YouTube source or let Audio Archive resolve an artist and title. Processing continues independently of this browser.</p>
+  <h1>Save music from YouTube.</h1>
+  <p class="lede">Type in a song below, or paste a YouTube link. We'll find it, download the audio, and get it ready for you to download here. It usually takes a few minutes — feel free to close this tab and check back later, it keeps working in the background.</p>
 </section>
 <div class="grid" style="margin-bottom:32px">
   <section class="panel submit">
@@ -32,7 +32,7 @@
         </div>
       </details>
       <p class="meta" style="margin-top:8px">The verified source master and its metadata are always downloadable. Every file is made from that master, never from another download.</p>
-      <div class="actions"><button type="submit">Find and Rip</button></div>
+      <div class="actions"><button type="submit">Save it</button></div>
     </form>
     <form method="post" action="/csv/preview" enctype="multipart/form-data" style="margin-top:26px;border-top:1px solid var(--rule);padding-top:18px">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -58,7 +58,7 @@
       <div class="stat"><strong>{{ counts.review }}</strong><span>Needs review</span></div>
     </div>
     {% if counts.failed %}<p class="notice" style="margin-top:14px">{{ counts.failed }} job{% if counts.failed != 1 %}s{% endif %} currently failed and can be inspected or retried.</p>{% endif %}
-    <p class="meta" style="margin-top:16px">Cloud media is temporary. Successful delivery objects expire after the configured retention window; job history remains.</p>
+    <p class="meta" style="margin-top:16px">Downloads are temporary, so save them somewhere safe soon after they're ready. This page keeps showing the job even after its files expire.</p>
   </aside>
 </div>
 <section>
