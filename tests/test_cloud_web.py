@@ -924,3 +924,52 @@ def test_the_job_page_names_the_conditions_before_the_tool_output(
 
     assert "3 quality warnings: PO token, signature challenge" in page
     assert "<details" in page
+
+
+def test_a_failed_attempts_log_is_downloadable_from_the_job_page(
+    web_client, cloud_database: CloudDatabase  # type: ignore[no-untyped-def]
+) -> None:
+    client, _ = web_client
+    job_id = cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/dQw4w9WgXcQ", origin="url")
+    )
+    other_job = cloud_database.create_job(
+        CloudJobRequest(url="https://youtu.be/9bZkp7q19f0", origin="url")
+    )
+    with cloud_database.connect() as connection:
+        attempt = connection.execute(
+            """
+            INSERT INTO processing_attempts (
+                job_id, worker_id, ended_at_utc, result, failure_log
+            ) VALUES (%s, 'worker-1', NOW(), 'failed', %s)
+            RETURNING id
+            """,
+            (job_id, '{"stderr": "HTTP Error 403: Forbidden"}\n'),
+        ).fetchone()
+    assert attempt is not None
+    log_url = f"/jobs/{job_id}/attempts/{attempt['id']}/log"
+    cloud_database.transition_processing(job_id, ProcessingState.DOWNLOADING)
+    cloud_database.transition_processing(
+        job_id, ProcessingState.FAILED, message="simulated failure"
+    )
+    with cloud_database.connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET error_class = 'SourceAccessForbidden', "
+            "error_summary = 'HTTP Error 403' WHERE id = %s",
+            (job_id,),
+        )
+
+    page = client.get(f"/jobs/{job_id}", headers=ACCESS_HEADER).text
+    assert f'href="{log_url}"' in page
+
+    response = client.get(log_url, headers=ACCESS_HEADER)
+    assert response.status_code == 200
+    assert "HTTP Error 403: Forbidden" in response.text
+    assert "attachment" in response.headers["content-disposition"]
+
+    # A log is served only under the job whose attempt saved it, and only to signed-in users.
+    assert client.get(
+        f"/jobs/{other_job}/attempts/{attempt['id']}/log", headers=ACCESS_HEADER
+    ).status_code == 404
+    assert client.get(log_url).status_code == 403
+    assert "attempts/" not in client.get(f"/jobs/{other_job}", headers=ACCESS_HEADER).text

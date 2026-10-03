@@ -16,6 +16,7 @@
     <summary>Technical details</summary>
     <p class="mono" style="margin-top:10px;white-space:pre-wrap">{{ view.job.error_view.detail }}</p>
   </details>
+  {% if view.failure_log %}<p class="meta"><a href="{{ view.failure_log.url }}">Download the full download log</a> from the failed attempt.</p>{% endif %}
   {% if view.job.processing_state in ["failed", "interrupted"] and view.job.delivery_state == "not_published" %}
   <form method="post" action="/jobs/{{ view.job.id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Retry job</button></form>
   {% endif %}
@@ -26,6 +27,7 @@
 <section class="panel" style="margin-bottom:20px">
   <h2>Waiting to retry</h2>
   <p class="meta">A YouTube access failure stopped attempt {{ view.job.access_retry_count }}. The worker retries automatically from {{ view.job.retry_at }}; no action is needed.</p>
+  {% if view.failure_log %}<p class="meta"><a href="{{ view.failure_log.url }}">Download the full download log</a> from the attempt that failed.</p>{% endif %}
 </section>
 {% endif %}
 
