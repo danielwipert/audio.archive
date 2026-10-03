@@ -1038,3 +1038,81 @@ def test_scratch_that_cannot_be_verified_is_not_reused(
     assert result.state is ProcessingState.COMPLETED
     # The unverifiable item was discarded, so the source was acquired again.
     assert FakeAcquisitionService.downloads == 2
+
+
+FORBIDDEN_STDERR = "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+
+
+class ForbiddenAcquisitionService(FakeAcquisitionService):
+    """Write the acquisition log and fail the way a refused media download does."""
+
+    def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
+        job_temp = self.config.temp_directory / str(request.job_id)
+        job_temp.mkdir(parents=True, exist_ok=True)
+        (job_temp / "ingest.log").write_text(
+            json.dumps({"returncode": 1, "stderr": FORBIDDEN_STDERR}) + "\n",
+            encoding="utf-8",
+        )
+        raise _tool_failure(FORBIDDEN_STDERR)
+
+
+def test_a_failed_attempt_keeps_its_acquisition_log(
+    cloud_db: CloudDatabase,
+    cloud_settings: CloudSettings,
+    base_config: AppConfig,
+) -> None:
+    """A successful job publishes ingest.log; a failed one used to keep only the last
+    kilobyte of yt-dlp's error, too little to tell why YouTube refused the download."""
+
+    storage = FakeDeliveryStorage()
+    processor = _processor(cloud_db, cloud_settings, base_config, storage)
+    processor.acquisition_factory = ForbiddenAcquisitionService  # type: ignore[assignment]
+    job_id = cloud_db.create_job(
+        CloudJobRequest(url=VIDEO_URL, profile=CloudProfile.SOURCE, origin="url")
+    )
+    claim = cloud_db.claim_next_job(worker_id=cloud_settings.worker_id)
+    assert claim is not None
+    with pytest.raises(ToolExecutionError):
+        processor.process_claim(claim, heartbeat=NoopHeartbeat())
+    cloud_db.release_claim(claim)
+
+    with cloud_db.connect() as connection:
+        attempt = connection.execute(
+            "SELECT id, result, failure_log FROM processing_attempts WHERE job_id = %s",
+            (job_id,),
+        ).fetchone()
+    assert attempt is not None and attempt["result"] == "failed"
+    assert FORBIDDEN_STDERR in attempt["failure_log"]
+    view = CloudWebRepository(cloud_db).get_job_view(job_id)
+    assert view.failure_log_attempt is not None
+    assert view.failure_log_attempt["id"] == attempt["id"]
+
+
+def test_an_attempt_that_never_reached_acquisition_saves_no_log(
+    cloud_db: CloudDatabase,
+    cloud_settings: CloudSettings,
+    base_config: AppConfig,
+) -> None:
+    """A log left in scratch by an earlier attempt belongs to that attempt, not this one."""
+
+    storage = FakeDeliveryStorage()
+    processor = _processor(cloud_db, cloud_settings, base_config, storage)
+    job_id = cloud_db.create_job(
+        CloudJobRequest(artist="Artist", title="Title", profile=CloudProfile.SOURCE)
+    )
+    stale = cloud_settings.scratch_root / f"job-{job_id}" / "temp" / str(job_id)
+    stale.mkdir(parents=True)
+    (stale / "ingest.log").write_text("stale log from an earlier attempt\n", encoding="utf-8")
+    claim = cloud_db.claim_next_job(worker_id=cloud_settings.worker_id)
+    assert claim is not None
+    # The search fails while resolving, before this attempt has touched the workspace.
+    with pytest.raises(AssertionError, match="should not execute external tools"):
+        processor.process_claim(claim, heartbeat=NoopHeartbeat())
+    cloud_db.release_claim(claim)
+
+    with cloud_db.connect() as connection:
+        attempt = connection.execute(
+            "SELECT failure_log FROM processing_attempts WHERE job_id = %s", (job_id,)
+        ).fetchone()
+    assert attempt is not None and attempt["failure_log"] is None
+    assert (stale / "ingest.log").is_file()

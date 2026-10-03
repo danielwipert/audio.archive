@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
@@ -516,6 +516,18 @@ def create_cloud_app(
             raise HTTPException(status_code=410, detail=str(exc)) from exc
         return RedirectResponse(url=signed_url, status_code=302)
 
+    @app.get("/jobs/{job_id}/attempts/{attempt_id}/log")
+    async def download_failure_log(job_id: int, attempt_id: int):
+        try:
+            log = repository.get_failure_log(job_id, attempt_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        filename = f"job-{job_id}-attempt-{attempt_id}-ingest.log"
+        return PlainTextResponse(
+            log,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     @app.get("/api/jobs")
     async def api_jobs():
         return {"jobs": [_job_payload(row) for row in repository.list_jobs(limit=100)]}
@@ -634,8 +646,17 @@ def _view_payload(view: JobView) -> dict[str, object]:
                 "deleted": deleted,
             }
         )
+    failure_log = None
+    if view.failure_log_attempt is not None:
+        attempt_id = int(view.failure_log_attempt["id"])
+        failure_log = {
+            "attempt_id": attempt_id,
+            "ended_at": format_timestamp(view.failure_log_attempt.get("ended_at_utc")),
+            "url": f"/jobs/{job['id']}/attempts/{attempt_id}/log",
+        }
     return {
         "job": job,
+        "failure_log": failure_log,
         "candidates": list(view.candidates),
         "events": [
             {

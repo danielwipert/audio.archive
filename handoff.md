@@ -25,8 +25,13 @@ state and exact next step. Keep it short; this is not a cumulative changelog.
 - Verification: 203 tests pass with PostgreSQL and FFmpeg available, nothing skipped. That
   included the DEC-008 byte-identical segmentation test, which had been skipped in every
   previous session.
-- Schema is at migration 4. Deploy the web service before the worker; the worker waits for
+- Schema is at migration 5. Deploy the web service before the worker; the worker waits for
   the migrations it ships with and logs which ones it is waiting on.
+- A failed attempt now saves its full `ingest.log` (migration 5), downloadable from the job
+  page's failure panel or its waiting-to-retry panel. Use it on the next intermittent
+  `HTTP Error 403: Forbidden` at media download (seen 2026-10-03 on one video that plays
+  logged out, while the next job succeeded); the suspected cause is the proxy changing
+  address between the page fetch and the media download.
 - New worker variables, all defaulted: `AUDIO_ARCHIVE_ACCESS_RETRY_LIMIT` (3),
   `AUDIO_ARCHIVE_ACCESS_RETRY_BASE_SECONDS` (300),
   `AUDIO_ARCHIVE_SCRATCH_RETENTION_HOURS` (6). Web adds `AUDIO_ARCHIVE_MAX_CSV_BYTES`.

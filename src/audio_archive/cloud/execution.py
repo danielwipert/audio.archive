@@ -87,6 +87,7 @@ class CloudExecutionRepository:
         result: str,
         error_class: str | None = None,
         error_summary: str | None = None,
+        failure_log: str | None = None,
     ) -> None:
         with self.database.connect() as connection:
             update = connection.execute(
@@ -95,10 +96,11 @@ class CloudExecutionRepository:
                 SET ended_at_utc = NOW(),
                     result = %s,
                     error_class = %s,
-                    error_summary = %s
+                    error_summary = %s,
+                    failure_log = %s
                 WHERE id = %s AND ended_at_utc IS NULL
                 """,
-                (result, error_class, error_summary, attempt_id),
+                (result, error_class, error_summary, failure_log, attempt_id),
             )
             if update.rowcount != 1:
                 raise ValueError(f"Processing attempt {attempt_id} is already closed or missing")

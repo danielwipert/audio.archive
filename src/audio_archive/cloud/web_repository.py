@@ -20,6 +20,8 @@ class JobView:
     candidates: tuple[dict[str, object], ...]
     events: tuple[dict[str, object], ...]
     outputs: tuple[dict[str, object], ...]
+    # The most recent failed attempt that saved an acquisition log, if any.
+    failure_log_attempt: dict[str, object] | None = None
 
 
 class CloudWebRepository:
@@ -65,12 +67,37 @@ class CloudWebRepository:
                 """,
                 (job_id,),
             ).fetchall()
+            failure_log_attempt = connection.execute(
+                """
+                SELECT id, ended_at_utc FROM processing_attempts
+                WHERE job_id = %s AND failure_log IS NOT NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
         return JobView(
             job=job,
             candidates=tuple(dict(row) for row in candidates),
             events=tuple(dict(row) for row in events),
             outputs=tuple(dict(row) for row in outputs),
+            failure_log_attempt=dict(failure_log_attempt) if failure_log_attempt else None,
         )
+
+    def get_failure_log(self, job_id: int, attempt_id: int) -> str:
+        """Return the acquisition log one failed attempt of this job saved."""
+
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT failure_log FROM processing_attempts
+                WHERE id = %s AND job_id = %s AND failure_log IS NOT NULL
+                """,
+                (attempt_id, job_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Job {job_id} has no saved log for attempt {attempt_id}")
+        return str(row["failure_log"])
 
     def approve_candidate(self, job_id: int, video_id: str) -> None:
         with self.database.connect() as connection:

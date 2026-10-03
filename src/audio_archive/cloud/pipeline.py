@@ -31,6 +31,10 @@ from .workspace import CloudWorkspace
 
 LOGGER = logging.getLogger("audio_archive.cloud.pipeline")
 
+# A yt-dlp run with progress output disabled writes a few kilobytes; this bound only
+# stops a runaway log from bloating the attempts table.
+FAILURE_LOG_MAX_CHARS = 256_000
+
 
 class HeartbeatGuard(Protocol):
     def check(self) -> None: ...
@@ -110,6 +114,9 @@ class CloudJobProcessor:
         workspace = CloudWorkspace.for_claim(self.settings, claim)
         attempt_closed = False
         workspace_finished = False
+        # Set only once this attempt has emptied the temporary directory, so a log left by
+        # an earlier attempt is never recorded against this one.
+        ingest_log: Path | None = None
         try:
             job = self.database.get_job(claim.job_id)
             state = ProcessingState(str(job["processing_state"]))
@@ -128,6 +135,7 @@ class CloudJobProcessor:
                 )
 
             reusable = workspace.prepare()
+            ingest_log = workspace.temp_directory / str(claim.job_id) / "ingest.log"
             if reusable:
                 LOGGER.info(
                     "Job %s reuses verified scratch from an earlier attempt: %s",
@@ -219,6 +227,7 @@ class CloudJobProcessor:
                         result="failed",
                         error_class=classify_job_error(stage, exc),
                         error_summary=str(exc)[:4000],
+                        failure_log=_read_failure_log(ingest_log),
                     )
                     attempt_closed = True
             raise
@@ -539,6 +548,25 @@ class CloudJobProcessor:
                 # The output is still inaccessible because delivery was never made available.
                 # R2 lifecycle deletion remains the final safety net for an orphaned object.
                 continue
+
+
+def _read_failure_log(path: Path | None) -> str | None:
+    """Return a failed attempt's acquisition log, keeping the end if it is very long.
+
+    The log is the same record a successful job publishes, already stripped of proxy
+    credentials by the runner that produced it. The end is kept because that is where
+    yt-dlp reports the error that stopped it.
+    """
+
+    if path is None:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if len(text) > FAILURE_LOG_MAX_CHARS:
+        text = "[earlier output truncated]\n" + text[-FAILURE_LOG_MAX_CHARS:]
+    return text
 
 
 def _set_cloud_manifest_profile(
